@@ -10,19 +10,16 @@ rules](parallel-agents.md). You verify anchor evidence, not methodology.
 
 ## 1. Boot and recover the plane
 
-1. Acquire `.history/plane.lock`; fresher than `LOCK_STALE` → alert, stop
-   without edits. Stale-lock takeover requires verifying the recorded process
+1. Acquire `.history/plane.lock`; fresher than `LOCK_STALE` → alert, stop without edits. Stale-lock takeover requires verifying the recorded process
    (cwd/cmdline) — unverifiable identity → human escalation, never takeover.
-2. If `TASK_LIST.md` is absent, initialize via the `workflow-init` skill
-   (`.claude/skills/workflow-init/SKILL.md`): pre-install floor check
+2. If `TASK_LIST.md` is absent, initialize via the `workflow-init` skill (`.agent/skills/workflow-init/SKILL.md`): pre-install floor check
    first, then `init.sh` — it creates the dirs/files, gitignores, pointer
    block, TASK_LIST seed, and api-config. Never rewrite adapted rules —
    the skill flags them for human migration.
 3. Sweep task ledgers: ratify/deny DECLARED claims immediately; assess active
    rows by artifact liveness (commits and mtimes outrank pids); surface open
    QA/review items.
-4. Route declared states (`state:` lines via `status.sh`): answer every BLOCKED
-   row within one poll cycle — to its `clearer` or cleared; carrying one
+4. Route declared states (`state:` lines via `status.sh`): answer every BLOCKED row within one poll cycle — to its `clearer` or cleared; carrying one
    silently is a plane failure; WAITING rows once older than `STALE_AFTER`;
    tally `kind:process` separately (workflow defects feed the retrospective).
 5. Start the event-driven wake: run `.history/_bin/<platform>/plane-watch.sh`
@@ -41,7 +38,10 @@ inspect named files and apply [async-inputs.md](async-inputs.md). Before a
 conflicting grant, force a stale scan (`--stale-now` / `-StaleNow`) and verify candidates first.
 
 After CLOSE, assign the next phase in the worker inbox only if the charter
-authorizes it; otherwise ask the human. Append observations to worklogs; never
+authorizes it; otherwise ask the human. Manual-test (§6) is the exception: it is
+charter-authorized by default — at unit CLOSE a waive on file (charter `waived-by-human`
+or a `WAIVE` relay) skips the campaign (record WAIVED); without one, charter the
+campaign — never stop to ask. Append observations to worklogs; never
 edit above your own last entry. Plane message lines (`— plane (verb) …`) carry
 `kind:<question|decision|blocker|status|handoff>` so the board can filter them;
 no marker → uncategorized, never dropped.
@@ -90,9 +90,9 @@ auto-release — human may be mid-edit ([core spec §2](control-plane-pm.md)).
 - At DONE, end live worker sessions: inbox row `TASK-COMPLETE <slug> — no
   further phases chartered; end session` (harmless with no live session). At
   DELIVERED you may delegate via `CLEANUP <slug> — <items>` (worktree removal
-  + task-dir scratch; agent branch untouched) and verify it landed — worker
-  steps in [close duties](worker-close.md#task-complete--cleanup-consumption);
-  no live session → clean up yourself.
+  + task-dir scratch; agent branch untouched) and verify it landed — steps in
+  [close duties](worker-close.md#task-complete--cleanup-consumption); no live
+  session → clean up yourself.
 
 ## 5. Stop the plane
 

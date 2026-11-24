@@ -28,10 +28,11 @@ for d in .history/*/; do
   if [ -f "${d}review.md" ]; then
     pend=$(awk -F'|' '/^\|[ ]*F[0-9]/ {n=split($0,a,"|"); s=a[n-1]; gsub(/^ +| +$/,"",s); if (s !~ /RESOLVED|DROPPED|STANDING NOTE/) {gsub(/^ +| +$/,"",a[2]); gsub(/^ +| +$/,"",a[4]); tag=(s ~ /RELEASED/) ? "released—awaiting fix consumer" : "held—surface at next reply"; print "    ["tag"] review "a[2]" ["a[4]"]: "s}}' "${d}review.md")
     [ -n "$pend" ] && out="$out$pend\n"
-    # open pass = findings appended AFTER the last completion marker (findings
-    # always precede their marker in a well-formed report; counting marker-less
-    # findings fired on every closed task forever — fixed 2026-11-03)
-    opens=$(awk '/^### Pass complete/{last=NR} /^### F[0-9]/{if (last && NR>last) c++} END{print c+0}' "${d}review.md")
+    # open pass = findings appended AFTER the LAST completion marker. Each
+    # marker resets the count (a later marker closes its pass's findings —
+    # cumulative counting made every multi-pass report look open, fixed
+    # 2026-11-16); marker-less findings stay exempt (fix 2026-11-03)
+    opens=$(awk '/^### Pass complete/{last=NR; c=0} /^### F[0-9]/{if (last && NR>last) c++} END{print c+0}' "${d}review.md")
     [ "${opens:-0}" -gt 0 ] && out="${out}    review: OPEN PASS — $opens finding(s) after last 'Pass complete' marker (not actionable yet)\n"
   fi
 

@@ -24,8 +24,8 @@ both are reported as skips. See `PROBE-RESULTS-WINDOWS.md` for the latest run.
 The Windows probe is designed to be run by Codex on Windows. It checks that
 the Codex `AGENTS.md` entrypoint and role instructions ship with the package,
 then tests the Windows lifecycle scripts. It does not test prompt adherence
-or Codex's active workspace permissions. The bundled `.claude/` hook applies
-only to Claude Code; do not count this run as proof of Codex enforcement.
+or Codex's active workspace permissions. The bundled `.agent/` hook (installed
+as `.claude/` on Claude Code) applies only to Claude Code; do not count this run as proof of Codex enforcement.
 To verify automatic AGENTS loading, open the installed project in a fresh
 Codex session; this script only checks the file and init selection.
 

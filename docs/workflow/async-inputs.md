@@ -32,18 +32,19 @@ notes](../../.history/_bin/README.md).
 **When:** A changed inbox, QA, or review artifact is reported. **Why:** Files
 carry durable context; only human input authorizes human-gated actions. **How:**
 
-- Inbox: read rows addressed to you; decide your own response; append `Ack:`
-  when consumed. Send information by appending a row. The next poll delivers it.
-  Fixed plane-authored row vocabulary: `TASK-COMPLETE <slug> — … end session`
-  (task DONE, end your session cleanly) and `CLEANUP <slug> — <items>`
+- Inbox: read rows addressed to you; decide your own response; append `Ack:` when consumed; send info by appending a row (the next poll delivers it).
+  **Timestamps are clock-read, never inferred** (2026-11-12 drift: labels said minutes, real gaps 33m/3h41m): stamp rows/Acks with `date '+%F %H:%M %z'` inside
+  the append command, never derived from another row; fix drift in prose only.
+  Fixed plane-authored row vocabulary: `TASK-COMPLETE <slug> — … end session` (task DONE, end your session cleanly) and `CLEANUP <slug> — <items>`
   (same, plus the listed cleanup at DELIVERED) — both consume like any
   other row: `Ack:`, act, log.
-- QA: consume plane-curated RELEASED entries not yet acknowledged; apply the
-  human answer and append `Ack:`. ANSWERED-but-unreleased rows are readable for
+  Waive relay (human-only): `WAIVE <slug> — <reason>`, as an inbox row or spoken in
+  conversation (fill+release in one step) — send any time before §6 starts. The plane
+  checks it at §6 entry: waive on file skips the manual-test campaign, otherwise the campaign runs.
+- QA: consume plane-curated RELEASED entries not yet acknowledged; apply the human answer and append `Ack:`. ANSWERED-but-unreleased rows are readable for
   preparation only — never act on them; the human may still be editing. Mirror
   direct human instructions into the worklog or `qa.md`.
-- Review: fix only after a pass-complete marker exists and the adjudication is
-  RELEASED with FIX. An open pass is readable but not actionable; so is an
+- Review: fix only after a pass-complete marker exists and the adjudication is RELEASED with FIX. An open pass is readable but not actionable; so is an
   ADJUDICATED (held) finding awaiting release.
 - Reading and preparation are allowed. Agent-authored markers and status flips
   are context; they do not authorize human-gated work — only the human's
@@ -83,8 +84,7 @@ resumes. Use canonical paths from the role files.
 
 ## 6. Reuse command shapes
 
-**When:** A multi-step command succeeds and may be repeated. **Why:** Rebuilding
-it can change its permission shape and prompt on every run. **How:** Prefer the
+**When:** A multi-step command succeeds and may be repeated. **Why:** Rebuilding it can change its permission shape and prompt on every run. **How:** Prefer the
 fixed toolkit (`../../.history/_bin/README.md`) — a repeated permission prompt
 is a missing tool, so ask the plane for one instead of composing shell. Save
 the exact command in a script (or log to a file) under `<task-dir>/tmp/` and

@@ -660,3 +660,11 @@ line-counted below; nothing was dropped silently.
   SELFTEST-PASS, EVAL-PASS. Windows selftest.ps1 carries the matching
   lock case but is Windows-run-only (no PowerShell host on the build
   machine); it is exercised by the Windows probe, not claimed here.
+
+## 2026-11-16 — v6.0: `.agent/` package dir, plan/test-review subagents, plan approval gate
+
+- **Folder rename**: the package's agent-config dir is now `.agent/` (harness-neutral). At adoption the harness maps it to its own dir — `.claude/` on Claude Code; docs use `.agent/` paths with a mapping note. `init.sh`/`init.ps1` copy `.agent/` → `.claude/` on Claude installs (whole dir when `.claude/` is missing; missing skill dirs only on re-run, never overwriting adopted edits); worktree symlinks stay `.claude -> ../../.claude`. Hook self-protection covers both names; selftests (linux/mac/windows) auto-detect `AGENT_DIR`/`$AgentDir` (`.agent` pre-adoption, `.claude` post).
+- **Plan approval gate (human-held)**: qa releases unblock planning only; at plan-complete the plane runs its `plan-review` subagent (skill `.agent/skills/plan-review/`, scoped context: charter+plan+qa+worklog, verdict CLEAN|CHANGES-NEEDED into worklog); CHANGES-NEEDED loops the worker; CLEAN surfaces to the human — approval is human-only (mirror APPROVED; no approval → no impl writes). Trivial tasks bypass.
+- **Test-result review subagent**: at unit-test and manual-test CLOSE the plane runs `test-result-review` (`.agent/skills/test-result-review/`, phase=unit|manual) before ratifying — CLEAN ratifies, GAPS drives a fix round then re-runs on refreshed evidence.
+- **Scoped-context rule (all review subagents incl. §3.1)**: adjudicate on provided context (charter, phase artifacts, own read-only repo reads) — never inherited plane-session conversation.
+- **Path note**: entries dated before 2026-11-16 say `.claude/` for the package agent-config dir; that dir is now `.agent/` (installed location on Claude Code is still `.claude/`). The spawn-ban fix (2026-11-12) stands: the plane spawns phase agents itself, including the §3.1 reviewer — the new plan-approval gate adds one human approval (plan approval before impl writes) and does not reintroduce waiting before the reviewer spawn.

@@ -35,8 +35,8 @@ implementation — plane and worker may run on different harnesses.
 - **Phase**: <impl / review / fix / test / manual-test — one brief per phase>
 - **Constraints**: <repo rules, commit split (impl + TEST_), write-domain
   limits, resource tokens needed, fixture-domain declarations>
-- **Manual-test**: <scheduled (default) / waived-by-human(<reason>) — decided
-  before impl, not after unit-test CLOSE>
+- **Manual-test**: <scheduled (default) / waived-by-human(<reason>) — charter
+  default; a `WAIVE` relay any time before §6 starts also waives>
 - **Gates**: <pre-test review before any test worker; user review final;
   DoD = report file + DONE marker + SHAs verified; CLOSE entry passes
   `closecheck.sh anchors <slug>`>

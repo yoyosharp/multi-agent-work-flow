@@ -103,9 +103,13 @@ command -v "$WATCH_TOOL" >/dev/null 2>&1 \
   && echo "  ok: server.sh present (server lifecycle available)" \
   || note_degraded "server.sh missing — server lifecycle (track F) unavailable; manual-test workers cannot stop their server"
 
-HOOK="$ROOT/.claude/hooks/domain-guard.sh"
+# agent-config dir: the package ships .agent/; a Claude install maps it
+# to .claude/ (section 6 copies it). The smoke test reads whichever
+# is present — .agent on a fresh package copy, .claude once installed.
+AGENT_SRC="$ROOT/.agent"; [ -d "$AGENT_SRC" ] || AGENT_SRC="$ROOT/.claude"
+HOOK="$AGENT_SRC/hooks/domain-guard.sh"
 hook_ok=0
-if [ -f "$HOOK" ] && grep -q 'PreToolUse' "$ROOT/.claude/settings.json" 2>/dev/null; then
+if [ -f "$HOOK" ] && grep -q 'PreToolUse' "$AGENT_SRC/settings.json" 2>/dev/null; then
   # functional smoke test, not just file presence (synthetic PreToolUse stdin;
   # the hook never touches the filesystem for these paths, so no fixture dir)
   wt="$ROOT/.worktree/__init_probe__"
@@ -152,6 +156,7 @@ note_kept ".history/ + .worktree/ dirs present"
 # plane-poll.sh fail calling siblings directly on a fresh extract — make
 # this platform's scripts and the hook executable here, at install time.
 chmod +x "$ROOT/.history/_bin/$PLATFORM/"*.sh 2>/dev/null
+[ -f "$ROOT/.agent/hooks/domain-guard.sh" ] && chmod +x "$ROOT/.agent/hooks/domain-guard.sh" 2>/dev/null
 [ -f "$ROOT/.claude/hooks/domain-guard.sh" ] && chmod +x "$ROOT/.claude/hooks/domain-guard.sh" 2>/dev/null
 note_kept "platform scripts + hook executable"
 
@@ -259,7 +264,26 @@ else
   note_created ".history/_bin/api-config.env (from template — fill <...> values, then run api.sh login smoke test)"
 fi
 
-# --- 6. .claude wiring: symlink into every worktree ---------------------------
+# --- 6. agent-config mapping: .agent/ (package) -> .claude/ (Claude) + worktree symlinks ---
+# The package ships the harness-neutral .agent/ dir. Claude Code reads
+# .claude/, so init copies .agent/ -> .claude/ when .claude/ is missing.
+# On re-run over an adopted .claude/ (checklists filled), init never
+# overwrites it — it only copies skill dirs missing there, so a package
+# upgrade still delivers new skills. Other harnesses map .agent/ to
+# their own dir at adoption (Codex: AGENTS.md entrypoint, no .claude/).
+if [ -d "$ROOT/.agent" ] && [ ! -d "$ROOT/.claude" ]; then
+  cp -r "$ROOT/.agent" "$ROOT/.claude" && chmod +x "$ROOT/.claude/hooks/domain-guard.sh" 2>/dev/null \
+    && note_created ".claude/ (copied from package .agent/)"
+elif [ -d "$ROOT/.agent" ] && [ -d "$ROOT/.claude" ]; then
+  for s in "$ROOT/.agent/skills/"*/; do
+    [ -d "$s" ] || continue
+    skill="$(basename "$s")"
+    if [ ! -d "$ROOT/.claude/skills/$skill" ]; then
+      cp -r "$s" "$ROOT/.claude/skills/$skill" && note_created ".claude/skills/$skill/ (new skill from package .agent/)"
+    fi
+  done
+  note_kept ".claude/ present (adopted — never overwritten)"
+fi
 if [ -d "$ROOT/.claude" ]; then
   for d in "$ROOT"/.worktree/*/; do
     [ -d "$d" ] || continue
@@ -269,7 +293,7 @@ if [ -d "$ROOT/.claude" ]; then
     else ln -s ../../.claude "$d.claude" && note_created ".worktree/$slug/.claude -> ../../.claude"; fi
   done
 else
-  note_flagged ".claude/ missing in project root — copy the package .claude/ here, then re-run init.sh"
+  note_flagged ".agent/ missing in project root — copy the package .agent/ here, then re-run init.sh"
 fi
 
 # --- 7. receipt ---------------------------------------------------------------

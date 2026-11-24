@@ -111,6 +111,16 @@ else { "  SELFTEST-FAIL: sweep never tagged a RELEASED row — release path unpr
 if ($sweep -match 'qa Q3') { "  SELFTEST-FAIL: sweep surfaced a CONSUMED row — false positive"; $fail = 1 }
 else { "  ok: sweep leaves CONSUMED rows alone" }
 
+# multi-pass review: findings closed by a LATER marker must not count as open
+Set-Content -Path (Join-Path $rg 'review.md') -Value "| # | Finding | Severity | Status |`n|---|---|---|---|`n| F1 | first | MINOR | RESOLVED |`n| F2 | second | MINOR | RESOLVED |`n### F1`n### Pass complete — F1`n### F2`n### Pass complete — F1..F2"
+$sweep = & powershell -File (Join-Path $bin 'relays.ps1') | Out-String
+if ($sweep -match 'OPEN PASS') { "  SELFTEST-FAIL: sweep reported an open pass on a fully closed multi-pass report"; $fail = 1 }
+else { "  ok: sweep resets the open-pass count at each Pass complete marker" }
+Add-Content -Path (Join-Path $rg 'review.md') -Value "### F3"
+$sweep = & powershell -File (Join-Path $bin 'relays.ps1') | Out-String
+if ($sweep -match 'OPEN PASS — 1 finding') { "  ok: sweep still flags a finding after the last Pass complete marker" }
+else { "  SELFTEST-FAIL: sweep missed an open finding after the last marker"; $fail = 1 }
+
 "== plane lock holder parsing (v6 track H) — Windows-run-only"
 # lock.ps1 locates its project root from its own path, so the fixture is a
 # scratch tree carrying a copy of the script. This section CANNOT run on the
@@ -156,10 +166,11 @@ else { "  SELFTEST-FAIL: take wrote a malformed host:pid line ($first)"; $fail =
 
 "== instruction files stay under the 100-line cap (v5.3)"
 # capped = files agents read: docs/workflow, commands, skills.
+$AgentDir = if (Test-Path .agent) { '.agent' } else { '.claude' }
 # OPTIMIZATIONS.md and README.md are human-facing, deliberately uncapped.
 function Get-CapOver {
   $over = @()
-  foreach ($glob in 'docs\workflow\*.md','.claude\commands\*.md','.claude\skills\*\SKILL.md') {
+  foreach ($glob in 'docs\\workflow\\*.md',"$AgentDir\\commands\\*.md","$AgentDir\\skills\\*\\SKILL.md") {
     foreach ($f in Get-Item $glob -ErrorAction SilentlyContinue) {
       $n = (Get-Content $f.FullName).Count
       if ($n -gt 100) { $over += "$($f.Name) ($n)" }
@@ -177,6 +188,24 @@ if ((Get-CapOver) -match 'zz-cap-fixture') { "  ok: cap check flags a 101-line f
 else { "  SELFTEST-FAIL: cap check never failed — 101-line fixture not flagged"; $fail = 1 }
 Remove-Item -Force $fx
 
+
+"== plan-approval gate + test-result-review (v6.0)"
+if ((Test-Path (Join-Path $AgentDir 'skills\plan-review\SKILL.md')) -and (Test-Path (Join-Path $AgentDir 'skills\test-result-review\SKILL.md'))) { "  ok: plan-review + test-result-review skills present under $AgentDir\skills" }
+else { "  SELFTEST-FAIL: new review skills missing from $AgentDir\skills"; $fail = 1 }
+if ((Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern 'Plan mode \+ approval gate' -Quiet) -and (Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern 'test-result-review' -Quiet)) { "  ok: pm.md carries the plan-approval gate + test-result-review" }
+else { "  SELFTEST-FAIL: pm.md lost the new gates"; $fail = 1 }
+if ((Select-String -Path 'docs\workflow\worker-instructions.md' -Pattern 'kind:plan-approval clearer:human' -Quiet) -and (Select-String -Path 'docs\workflow\worker-instructions.md' -Pattern 'kind:<answer\|dependency\|access\|plan-approval>' -Quiet)) { "  ok: worker-instructions declares the plan-approval WAITING kind" }
+else { "  SELFTEST-FAIL: worker-instructions lost kind:plan-approval"; $fail = 1 }
+if (Select-String -Path 'docs\workflow\verify-duties.md' -Pattern 'Test-result review gate' -Quiet) { "  ok: verify-duties carries the test-result-review gate" }
+else { "  SELFTEST-FAIL: verify-duties lost the test-result-review gate"; $fail = 1 }
+if (Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern 'It spawns phase agents itself' -Quiet) { "  ok: spawn-ban fix intact in pm.md: plane spawns phase agents itself" }
+else { "  SELFTEST-FAIL: spawn-ban fix lost from pm.md"; $fail = 1 }
+if (Select-String -Path 'docs\workflow\control-plane-pm.md','docs\workflow\control-plane-instructions.md','docs\workflow\verify-duties.md' -Pattern 'launches nothing' -Quiet) { "  SELFTEST-FAIL: stale 'launches nothing' wording present in plane docs"; $fail = 1 }
+else { "  ok: no stale 'launches nothing' wording in plane docs" }
+if ((Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern 'never stops to ask' -Quiet) -and (Select-String -Path 'docs\workflow\async-inputs.md' -Pattern 'WAIVE <slug>' -Quiet)) { "  ok: §6 defaults to campaign: no blocking ask, waive by charter or WAIVE relay" }
+else { "  SELFTEST-FAIL: §6 lost the default-campaign rule"; $fail = 1 }
+if (Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern 'pending decision, not an answer' -Quiet) { "  SELFTEST-FAIL: stale §6 blocking-wait wording present in pm.md"; $fail = 1 }
+else { "  ok: no stale §6 blocking-wait wording in pm.md" }
 Remove-Item -Recurse -Force $work
 Remove-Item -Recurse -Force $rg
 if ($fail -eq 0) { "SELFTEST-PASS: every gate demonstrated failing and passing"; exit 0 }

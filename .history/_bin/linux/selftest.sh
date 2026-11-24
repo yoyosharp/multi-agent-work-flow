@@ -6,6 +6,9 @@
 # Exit 0 = all gates demonstrated; nonzero = a gate could NOT be shown to
 # fail (or pass) — treat as a broken gate, not a broken fixture.
 # Usage: selftest.sh
+# agent config dir: .agent pre-adoption, .claude post-adoption (harness-dependent)
+AGENT_DIR="$([ -d .agent ] && printf .agent || printf .claude)"
+
 set -u
 cd "$(dirname "$0")/../../.." || exit 1
 bin="$(dirname "$0")"
@@ -106,6 +109,22 @@ printf '%s' "$sweep" | grep -q 'qa Q3' \
   && bad "sweep surfaced a CONSUMED row — false positive" \
   || ok "sweep leaves CONSUMED rows alone"
 
+# multi-pass review: findings closed by a LATER marker must not count as open
+# (2026-11-16: cumulative counting made every multi-pass report look open)
+printf '%s\n' '| # | Finding | Severity | Status |' '|---|---|---|---|' \
+  '| F1 | first | MINOR | RESOLVED |' '| F2 | second | MINOR | RESOLVED |' \
+  '### F1' '### Pass complete — F1' '### F2' '### Pass complete — F1..F2' \
+  > ".history/relay-gate-selftest/review.md"
+sweep=$(bash "$bin/relays.sh")
+printf '%s' "$sweep" | grep -q 'OPEN PASS' \
+  && bad "sweep reported an open pass on a fully closed multi-pass report" \
+  || ok "sweep resets the open-pass count at each Pass complete marker"
+printf '%s\n' '### F3' >> ".history/relay-gate-selftest/review.md"
+sweep=$(bash "$bin/relays.sh")
+printf '%s' "$sweep" | grep -q 'OPEN PASS — 1 finding' \
+  && ok "sweep still flags a finding after the last Pass complete marker" \
+  || bad "sweep missed an open finding after the last marker"
+
 echo "== PreToolUse hook guards the write domain (v5.4)"
 # fixture root: a temp project with one claim row (domain src/test/**),
 # a worktree and a task dir; WORKFLOW_ROOT points the hook at it.
@@ -117,7 +136,7 @@ printf '%s\n' \
   '| 1 | demo-worker | host:123 | plane | impl | systematic | impl FooTest | src/test/** | manual-test | 2026-11-10 10:00 | EXECUTING | 2026-11-10 10:01 | |' \
   > "$hr/.history/2026-11-10-demo/workers.md"
 hook() { # hook <role> <slug> <json> — prints the hook's exit code
-  WORKFLOW_ROOT="$hr" WORKFLOW_ROLE="$1" WORKFLOW_SLUG="$2" bash .claude/hooks/domain-guard.sh <<< "$3" 2>/dev/null; echo $?
+  WORKFLOW_ROOT="$hr" WORKFLOW_ROLE="$1" WORKFLOW_SLUG="$2" bash "$AGENT_DIR/hooks/domain-guard.sh" <<< "$3" 2>/dev/null; echo $?
 }
 j_edit() { printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"},"cwd":"%s"}' "$1" "$2"; }
 j_read() { printf '{"tool_name":"Read","tool_input":{"file_path":"%s"},"cwd":"%s"}' "$1" "$2"; }
@@ -144,14 +163,14 @@ wt="$hr/.worktree/demo"
 [ "$(hook plane "" "$(j_edit "$hr/.history/TASK_LIST.md" "$hr")")" = 0 ] \
   && ok "hook allows the plane to write under .history/" \
   || bad "hook blocked the plane's own .history/ write"
-[ "$(WORKFLOW_ROOT="$hr" WF_ROLE=worker WF_SLUG=demo bash .claude/hooks/domain-guard.sh <<< "$(j_edit "$wt/src/test/FooTest.java" "$wt")" 2>/dev/null; echo $?)" = 0 ] \
+[ "$(WORKFLOW_ROOT="$hr" WF_ROLE=worker WF_SLUG=demo bash "$AGENT_DIR/hooks/domain-guard.sh" <<< "$(j_edit "$wt/src/test/FooTest.java" "$wt")" 2>/dev/null; echo $?)" = 0 ] \
   && ok "hook accepts WF_ROLE/WF_SLUG fallback aliases" \
   || bad "hook rejected the WF_* role/slug aliases"
 
 echo "== workflow-init (v6): fresh init, re-run, non-git abort"
 iprobe="$work/init-probe"
 mkdir -p "$iprobe/.history/_templates" "$iprobe/.history/_bin"
-cp -r docs .claude "$iprobe/"
+cp -r docs .agent "$iprobe/"
 cp -r .history/_templates/* "$iprobe/.history/_templates/"
 cp -r .history/_bin/linux "$iprobe/.history/_bin/linux"
 git init -q "$iprobe"
@@ -221,7 +240,7 @@ grep -qE 'Authorization:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._-]{8,}|eyJ[A-Z
 # migration: blanket line + user lines → re-run replaces exactly the blanket line.
 mprobe="$work/mig-probe"
 mkdir -p "$mprobe/.history/_templates" "$mprobe/.history/_bin"
-cp -r docs .claude "$mprobe/"
+cp -r docs .agent "$mprobe/"
 cp -r .history/_templates/* "$mprobe/.history/_templates/"
 cp -r .history/_bin/linux "$mprobe/.history/_bin/linux"
 git init -q "$mprobe"
@@ -350,7 +369,7 @@ stask="$sroot/.history/2026-11-11-srv"
 spid="" victim="" rootpid="" portpid="" deadpid=""
 srv_pids=""
 shook() { # shook <role> <slug> <json> — hook exit code against the server fixture root
-  WORKFLOW_ROOT="$sroot" WORKFLOW_ROLE="$1" WORKFLOW_SLUG="$2" bash .claude/hooks/domain-guard.sh <<< "$3" 2>/dev/null; echo $?
+  WORKFLOW_ROOT="$sroot" WORKFLOW_ROLE="$1" WORKFLOW_SLUG="$2" bash "$AGENT_DIR/hooks/domain-guard.sh" <<< "$3" 2>/dev/null; echo $?
 }
 # leftover-fixture cleanup (explicit PIDs only, cmdline-guarded — a test
 # that fails mid-section must not leak a server out of the selftest).
@@ -491,7 +510,7 @@ rm -f "$stask/server.sh"
   || bad "init left server.sh non-executable"
 ocprobe="$work/oldcfg-probe"
 mkdir -p "$ocprobe/.history/_templates" "$ocprobe/.history/_bin"
-cp -r docs .claude "$ocprobe/"
+cp -r docs .agent "$ocprobe/"
 cp -r .history/_templates/* "$ocprobe/.history/_templates/"
 cp -r .history/_bin/linux "$ocprobe/.history/_bin/linux"
 git init -q "$ocprobe"
@@ -706,7 +725,7 @@ mkdir -p "$sroot2/.history" "$sroot2/.worktree/demo-stop"
 stop_run() { # stop_run <slug> [role] [extra-env] — prints event-log lines for the slug
   local slug="$1" role="${2:-worker}"
   WORKFLOW_ROOT="$sroot2" WORKFLOW_ROLE="$role" WORKFLOW_SLUG="$slug" \
-    bash .claude/hooks/phase-done.sh <<< "{\"cwd\":\"$sroot2/.worktree/demo-stop\"}" 2>/dev/null
+    bash "$AGENT_DIR/hooks/phase-done.sh" <<< "{\"cwd\":\"$sroot2/.worktree/demo-stop\"}" 2>/dev/null
   if [ -f "$sroot2/.history/._events.log" ]; then grep -c "\"slug\":\"$slug\"" "$sroot2/.history/._events.log" 2>/dev/null || true; else echo 0; fi
 }
 mkstop demo-stop EXECUTING
@@ -729,7 +748,7 @@ printf '%s\n' \
 [ "$(stop_run demo-declared)" = 0 ] \
   && ok "Stop hook ignores an old RELEASED row under a live DECLARED row" \
   || bad "Stop hook fired on a stale RELEASED row"
-[ "$(WORKFLOW_ROOT="$sroot2" WORKFLOW_ROLE=plane WORKFLOW_SLUG=demo-done bash .claude/hooks/phase-done.sh <<< "{\"cwd\":\"$sroot2\"}" 2>/dev/null; grep -c '"slug":"demo-done"' "$sroot2/.history/._events.log" 2>/dev/null || echo 0)" = 1 ] \
+[ "$(WORKFLOW_ROOT="$sroot2" WORKFLOW_ROLE=plane WORKFLOW_SLUG=demo-done bash "$AGENT_DIR/hooks/phase-done.sh" <<< "{\"cwd\":\"$sroot2\"}" 2>/dev/null; grep -c '"slug":"demo-done"' "$sroot2/.history/._events.log" 2>/dev/null || echo 0)" = 1 ] \
   && ok "Stop hook never signals for the plane" \
   || bad "Stop hook signalled for a plane stop"
 
@@ -973,8 +992,8 @@ grep -q "grep '\^host:pid '" .history/_bin/linux/lock.sh \
 echo "== instruction files stay under the 100-line cap (v5.3)"
 # capped = files agents read: docs/workflow/*.md + commands + skills.
 # OPTIMIZATIONS.md and README.md are human-facing, deliberately uncapped.
-cap_over() { wc -l docs/workflow/*.md .claude/commands/*.md \
-  .claude/skills/*/SKILL.md 2>/dev/null \
+cap_over() { wc -l docs/workflow/*.md "$AGENT_DIR"/commands/*.md \
+  "$AGENT_DIR"/skills/*/SKILL.md 2>/dev/null \
   | awk '$1 > 100 && $2 != "total" {print $2 " (" $1 ")"}'; }
 over=$(cap_over)
 [ -z "$over" ] && ok "all instruction files <= 100 lines" \
@@ -986,6 +1005,39 @@ cap_over | grep -q 'zz-cap-fixture' \
   || bad "cap check never failed — 101-line fixture not flagged"
 rm -f docs/workflow/zz-cap-fixture.md
 
+
+echo "== plan-approval gate + test-result-review (v6.0)"
+[ -f "$AGENT_DIR/skills/plan-review/SKILL.md" ] && [ -f "$AGENT_DIR/skills/test-result-review/SKILL.md" ] \
+  && ok "plan-review + test-result-review skills present under $AGENT_DIR/skills/" \
+  || bad "new review skills missing from $AGENT_DIR/skills/"
+grep -q "Plan mode + approval gate" docs/workflow/control-plane-pm.md \
+  && grep -q "test-result-review" docs/workflow/control-plane-pm.md \
+  && ok "pm.md carries the plan-approval gate + test-result-review" \
+  || bad "pm.md lost the new gates"
+grep -q "kind:plan-approval clearer:human" docs/workflow/worker-instructions.md \
+  && grep -q "kind:<answer|dependency|access|plan-approval>" docs/workflow/worker-instructions.md \
+  && ok "worker-instructions declares the plan-approval WAITING kind" \
+  || bad "worker-instructions lost kind:plan-approval"
+grep -q "Test-result review gate" docs/workflow/verify-duties.md \
+  && ok "verify-duties carries the test-result-review gate" \
+  || bad "verify-duties lost the test-result-review gate"
+grep -q "It spawns phase agents itself" docs/workflow/control-plane-pm.md \
+  && ok "spawn-ban fix intact in pm.md: plane spawns phase agents itself" \
+  || bad "spawn-ban fix lost from pm.md"
+! grep -q "launches nothing" docs/workflow/control-plane-pm.md docs/workflow/control-plane-instructions.md docs/workflow/verify-duties.md \
+  && ok "no stale 'launches nothing' wording in plane docs" \
+  || bad "stale 'launches nothing' wording present in plane docs"
+[ "$(wc -l < "$AGENT_DIR/skills/plan-review/SKILL.md" | tr -d ' ')" -le 100 ] \
+  && [ "$(wc -l < "$AGENT_DIR/skills/test-result-review/SKILL.md" | tr -d ' ')" -le 100 ] \
+  && ok "new review skills are within the 100-line cap" \
+  || bad "a new review skill exceeds 100 lines"
+grep -q "never stops to ask" docs/workflow/control-plane-pm.md \
+  && grep -q "WAIVE <slug>" docs/workflow/async-inputs.md \
+  && ok "§6 defaults to campaign: no blocking ask, waive by charter or WAIVE relay" \
+  || bad "§6 lost the default-campaign rule"
+! grep -q "pending decision, not an answer" docs/workflow/control-plane-pm.md \
+  && ok "no stale §6 blocking-wait wording in pm.md" \
+  || bad "stale §6 blocking-wait wording present in pm.md"
 rm -rf "$work" ".history/relay-gate-selftest"
 if [ $fail -eq 0 ]; then echo "SELFTEST-PASS: every gate demonstrated failing and passing"
 else echo "SELFTEST-FAIL: one or more gates unproven"; fi

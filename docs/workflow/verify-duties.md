@@ -37,16 +37,28 @@ claim accuracy stays an anecdote.
 
 ## Pre-test review gate
 
+**Trigger (binding): on verified impl CLOSE — ANCHOR-PASS + IN_REVIEW flip —
+the plane schedules the reviewer itself, within one poll cycle; no human
+order. The reviewer is a plane-spawned phase agent (see [core spec](control-plane-pm.md) —
+the plane spawns phase agents itself, including the §3.1 reviewer).**
+
 At the pre-test gate, invoke the `pre-test-review` skill the plane's own
-harness provides (e.g. `.claude/skills/pre-test-review/` on Claude Code)
+harness provides (e.g. `.agent/skills/pre-test-review/` on Claude Code)
 with `<slug> <base>..<head> [effort]`; without it, use [core review
 rules](control-plane-pm.md#3-code-review-gates). The review skill is
 plane-local — never imposed on workers on other harnesses.
 
+## Test-result review gate (v6.0)
+
+At unit-test CLOSE and at manual-test campaign CLOSE, run the `test-result-review` skill (`.agent/skills/test-result-review/`, arg
+`phase=unit|manual`) before ratifying the phase. CLEAN → ratify; GAPS →
+relay the findings to the worker as a fix round and re-run the subagent
+on refreshed evidence. Same scoped-context rule as §3.1: adjudicate on
+provided context only, never the plane session's wider conversation.
+
 ## API index merge (v6)
 
-At CLOSE, if the task dir carries `api-index-rows.md`, merge it into
-`.history/_shared/api-index.md` with `merge-index.sh <rows-file>`
+At CLOSE, if the task dir carries `api-index-rows.md`, merge it into `.history/_shared/api-index.md` with `merge-index.sh <rows-file>`
 (newest `last-verified-by` wins per `METHOD + path`; origin
 `discovered-by` kept). The script refuses rows carrying secret values
 (bearer/JWT/password/api-key/token) — a refused merge blocks the
@@ -55,12 +67,13 @@ path in the CLOSE entry: the merged rows are CLOSE evidence.
 
 ## Manual-test campaigns
 
-Manual-test is scheduled by default; the brief carries
-`manual-test: scheduled / waived-by-human(<reason>)` from intake (decided
-before impl). Require PASS/FAIL evidence or human-signed WAIVE before final
-CLOSE. Campaigns run through `api.sh` (or `evidence.sh` for calls made
-outside the engine); verdicts cite the logged evidence rows verbatim —
-summaries are not evidence.
+Manual-test defaults to campaign: at §6 entry check the brief for
+`waived-by-human(<reason>)` and the task inbox for a `WAIVE` relay on file —
+either waives: skip the campaign, record WAIVED in `manual-testing.md`, and
+close. Without a waive on file the campaign proceeds — never stop to ask.
+Require PASS/FAIL evidence (or the recorded WAIVE) before final CLOSE.
+Campaigns run through `api.sh` (or `evidence.sh` for calls made outside the
+engine); verdicts cite the logged evidence rows verbatim — summaries are not evidence.
 
 ## Server lifecycle (v6)
 

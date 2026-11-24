@@ -16,7 +16,7 @@ SCRATCH="$ROOT/server-probe-scratch"
 BIN="$ROOT/.history/_bin/linux"
 [ "$(uname -s)" = "Darwin" ] && BIN="$ROOT/.history/_bin/mac"
 PLAT="$(basename "$BIN")"
-HOOK="$ROOT/.claude/hooks/domain-guard.sh"
+HOOK="$ROOT/.agent/hooks/domain-guard.sh"
 # Fail fast: the probe needs a real v6 tree (fresh extract, after init).
 # Without this the cp below fails silently and every later test
 # misreports. Usage: run-server-matrix.sh [project-root] (see PROBE.md).

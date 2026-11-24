@@ -63,11 +63,15 @@ Add-Degraded "no file-watcher tool on Windows yet (track A Windows variant pendi
 if (Test-Path "$Root\.history\_bin\windows\server.ps1") { "  ok: server.ps1 present (server lifecycle available)" }
 else { Add-Degraded "server.ps1 missing — server lifecycle (track F) unavailable" }
 
-$hook = "$Root\.claude\hooks\domain-guard.sh"
+# agent-config dir: the package ships .agent/; a Claude install maps it
+# to .claude/ (section 6 copies it). The smoke test reads whichever
+# is present — .agent on a fresh package copy, .claude once installed.
+$agentSrc = if (Test-Path "$Root\.agent") { "$Root\.agent" } else { "$Root\.claude" }
+$hook = "$agentSrc\hooks\domain-guard.sh"
 $hookOk = $false
 if ($Harness -eq "codex") {
   Add-Degraded "Claude PreToolUse hook is not Codex enforcement; Codex domain/process gates are not included"
-} elseif ((Test-Path $hook) -and (Select-String -Path "$Root\.claude\settings.json" -Pattern "PreToolUse" -Quiet)) {
+} elseif ((Test-Path $hook) -and (Select-String -Path "$agentSrc\settings.json" -Pattern "PreToolUse" -Quiet)) {
   if (Get-Command bash -ErrorAction SilentlyContinue) {
     $wt = "$Root\.worktree\__init_probe__"
     $env:WORKFLOW_ROOT = $Root; $env:WORKFLOW_ROLE = "worker"; $env:WORKFLOW_SLUG = "__init_probe__"
@@ -217,18 +221,38 @@ else {
   Add-Created ".history\_bin\api-config.env (from template — fill <...> values, then run api.sh login smoke test)"
 }
 
-# --- 6. .claude wiring: symlink into every worktree ------------------------------
-if (Test-Path "$Root\.claude") {
-  foreach ($d in Get-ChildItem "$Root\.worktree" -Directory -ErrorAction SilentlyContinue) {
-    $link = Join-Path $d.FullName ".claude"
-    if ((Get-Item $link -ErrorAction SilentlyContinue).LinkType -eq "SymbolicLink") { Add-Kept ".worktree\$($d.Name)\.claude symlink present" }
-    elseif (Test-Path $link) { Add-Flagged ".worktree\$($d.Name)\.claude exists as a real dir — replace with a symlink to ..\..\.claude by hand" }
-    else {
-      try { New-Item -ItemType SymbolicLink -Path $link -Target "$Root\.claude" | Out-Null; Add-Created ".worktree\$($d.Name)\.claude -> ..\.claude" }
-      catch { Add-Flagged ".worktree\$($d.Name)\.claude symlink failed ($($_.Exception.Message)) — needs Developer Mode or admin; create it by hand" }
+# --- 6. agent-config mapping: .agent/ (package) -> .claude/ (Claude) + worktree symlinks ---
+# The package ships the harness-neutral .agent/ dir. Claude Code reads
+# .claude/, so init copies .agent/ -> .claude/ when .claude/ is missing.
+# On re-run over an adopted .claude/ (checklists filled), init never
+# overwrites it — it only copies skill dirs missing there, so a package
+# upgrade still delivers new skills. Codex needs no .claude/ mapping
+# (AGENTS.md entrypoint).
+if ($Harness -eq "claude") {
+  if ((Test-Path "$Root\.agent") -and (-not (Test-Path "$Root\.claude"))) {
+    Copy-Item -Recurse "$Root\.agent" "$Root\.claude"; Add-Created ".claude/ (copied from package .agent/)"
+  } elseif ((Test-Path "$Root\.agent") -and (Test-Path "$Root\.claude")) {
+    foreach ($s in Get-ChildItem "$Root\.agent\skills" -Directory -ErrorAction SilentlyContinue) {
+      if (-not (Test-Path "$Root\.claude\skills\$($s.Name)")) {
+        Copy-Item -Recurse $s.FullName "$Root\.claude\skills\$($s.Name)"; Add-Created ".claude\skills\$($s.Name)\ (new skill from package .agent\)"
+      }
     }
+    Add-Kept ".claude/ present (adopted — never overwritten)"
   }
-} else { Add-Flagged ".claude/ missing in project root — copy the package .claude/ here, then re-run init.ps1" }
+  if (Test-Path "$Root\.claude") {
+    foreach ($d in Get-ChildItem "$Root\.worktree" -Directory -ErrorAction SilentlyContinue) {
+      $link = Join-Path $d.FullName ".claude"
+      if ((Get-Item $link -ErrorAction SilentlyContinue).LinkType -eq "SymbolicLink") { Add-Kept ".worktree\$($d.Name)\.claude symlink present" }
+      elseif (Test-Path $link) { Add-Flagged ".worktree\$($d.Name)\.claude exists as a real dir — replace with a symlink to ..\..\.claude by hand" }
+      else {
+        try { New-Item -ItemType SymbolicLink -Path $link -Target "$Root\.claude" | Out-Null; Add-Created ".worktree\$($d.Name)\.claude -> ..\.claude" }
+        catch { Add-Flagged ".worktree\$($d.Name)\.claude symlink failed ($($_.Exception.Message)) — needs Developer Mode or admin; create it by hand" }
+      }
+    }
+  } else { Add-Flagged ".agent/ missing in project root — copy the package .agent/ here, then re-run init.ps1" }
+} else {
+  Add-Kept "Codex harness: no .claude/ mapping (AGENTS.md entrypoint)"
+}
 
 # --- 7. receipt ------------------------------------------------------------------
 $receipt = "$Root\.history\_init_receipt.md"

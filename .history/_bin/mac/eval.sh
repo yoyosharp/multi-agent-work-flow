@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# eval.sh — 33-task eval suite (v6 track D + track E + track F + track G + track H).
+# eval.sh — 34-task eval suite (v6 track D + track E + track F + track G + track H + v6.0 mapping).
 #
 # The gate that shows a v6 install behaves identically on a second project
 # or machine, instead of asserting it: it copies the package to a temp
@@ -16,7 +16,7 @@
 # plane's, not the eval's.
 #
 # Usage: eval.sh [package-root]   (default: the v6 tree this script ships in)
-# Exit 0 = EVAL-PASS (51/51); nonzero = EVAL-FAIL with the failing scenarios named.
+# Exit 0 = EVAL-PASS (53/53); nonzero = EVAL-FAIL with the failing scenarios named.
 # Windows eval is pending (no PowerShell host here); linux/mac only.
 set -u
 PKG="${1:-$(cd "$(dirname "$0")/../../.." && pwd -P)}"
@@ -30,7 +30,7 @@ bad() { echo "EVAL-FAIL: $1"; fail=$((fail+1)); }
 cd "$PROJ" || exit 1
 git init -q .
 BIN=.history/_bin/linux
-chmod +x "$BIN"/*.sh .claude/hooks/*.sh 2>/dev/null || true
+chmod +x "$BIN"/*.sh .agent/hooks/*.sh 2>/dev/null || true
 
 # 1-4: init
 bash "$BIN/init.sh" --check-only >/dev/null 2>&1 \
@@ -207,7 +207,7 @@ printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/README.md"},"cwd":"%s/
   || ok "18b domain guard blocks an out-of-domain write"
 
 # 19: line cap (same glob as the selftest cap check)
-over="$(wc -l docs/workflow/*.md .claude/commands/*.md .claude/skills/*/SKILL.md 2>/dev/null | awk '$1 > 100 && $2 != "total" {print $2}')"
+over="$(wc -l docs/workflow/*.md .agent/commands/*.md .agent/skills/*/SKILL.md 2>/dev/null | awk '$1 > 100 && $2 != "total" {print $2}')"
 [ -z "$over" ] \
   && ok "19 all instruction files stay under the 100-line cap" \
   || bad "19 over-cap files: $over"
@@ -312,7 +312,7 @@ git clone -q "$PROJ" "$EVAL_ROOT/machineB" 2>/dev/null
 
 # 26: migration — blanket line + user lines → re-run replaces exactly the blanket line
 mkdir -p "$EVAL_ROOT/migproj"
-(cd "$EVAL_ROOT/migproj" && cp -r "$PKG/.history" . && cp -r "$PKG/docs" "$PKG/.claude" . && git init -q .)
+(cd "$EVAL_ROOT/migproj" && cp -r "$PKG/.history" . && cp -r "$PKG/docs" "$PKG/.agent" . && git init -q .)
 bash "$EVAL_ROOT/migproj/.history/_bin/linux/init.sh" "$EVAL_ROOT/migproj" >/dev/null 2>&1
 printf 'node_modules/\n.history/\n*.log\n' > "$EVAL_ROOT/migproj/.gitignore"
 printf '# API contract index\n\n## GET /api/v1/old\n- discovered-by: old-task, 2026-11-01\n- last-verified-by: old-task, 2026-11-01\n' > "$EVAL_ROOT/migproj/.history/_shared/api-index.md"
@@ -488,6 +488,18 @@ head -1 .history/plane.lock | grep -q "^host:pid $(hostname):[0-9][0-9]*$" \
   || bad "33d take wrote a malformed host:pid line"
 rm -f .history/plane.lock
 
-echo "== EVAL: $pass passed, $fail failed (of $((pass+fail)) checks across 33 scenarios)"
+# 34: agent-config mapping (v6.0) — fresh init copies .agent/ -> .claude/;
+# re-run over an adopted .claude/ copies only missing skill dirs
+[ -f .claude/skills/plan-review/SKILL.md ] && [ -f .claude/skills/test-result-review/SKILL.md ] \
+  && ok "34 fresh init maps .agent/ to .claude/ incl. the new review skills" \
+  || bad "34 fresh init did not map the new review skills to .claude/"
+rm -rf .claude/skills/test-result-review
+printf '\n<!-- adopted-marker -->\n' >> .claude/skills/pre-test-review/SKILL.md
+bash "$BIN/init.sh" >/dev/null 2>&1
+[ -d .claude/skills/test-result-review ] && grep -q 'adopted-marker' .claude/skills/pre-test-review/SKILL.md \
+  && ok "34b init re-run restores a missing skill dir and leaves adopted files alone" \
+  || bad "34b init re-run did not restore the skill dir or overwrote an adopted file"
+
+echo "== EVAL: $pass passed, $fail failed (of $((pass+fail)) checks across 34 scenarios)"
 [ "$fail" -eq 0 ] && { echo "EVAL-PASS: every scenario demonstrated"; exit 0; }
 echo "EVAL-FAIL: $fail check(s) unproven"; exit 1

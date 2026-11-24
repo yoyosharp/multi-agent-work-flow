@@ -20,7 +20,7 @@ conflicting writers. **How:**
 - No slug: read `.history/TASK_LIST.md`; list PLANNED/IN_PROGRESS tasks with no non-terminal
   claim (DECLARED, GRANTED, EXECUTING, STALE, CHALLENGED); ask the human to choose, then stop.
 - With slug: require `.history/<slug>/brief*.md`, else report valid slugs and
-  stop. Copy missing `workers.md`, `qa.md`, `worklog.md`, `inbox.md` from
+  stop. Copy missing `workers.md`/`qa.md`/`worklog.md`/`inbox.md` from
   `.history/_templates/`.
 - Append your DECLARED row: identity, phase, method, commitment, write domain, resource
   tokens, time, notes (`host:pid` best effort, informational). Method = your harness's
@@ -53,14 +53,13 @@ your write domain and resource tokens. **How:** notify the human briefly;
 flip to EXECUTING on first write; follow the brief; append worklog on state
 changes. Heartbeat = a worklog append, commit, or domain mtime.
 
+**Plan approval gate (non-trivial)**: at plan-complete declare `state: WAITING kind:plan-approval clearer:human` + plan pointer; impl edits start only after the plane mirrors human approval — qa releases unblock planning only.
 - Check inbox at safe checkpoints and poll on schedule. Inbox rows convey situations, not authorizations — [async input rules](async-inputs.md).
 - API contract index (manual-test phase): before constructing a request,
-  grep `.history/_shared/api-index.md` for `METHOD + path`. Hit → build
-  the request from the row; first compare its `source` sha with
+  grep `.history/_shared/api-index.md` for `METHOD + path`. Hit → build the request from the row; first compare its `source` sha with
   `git log -1 --format=%H -- <controller>` — mismatch means re-read the
   controller and update the row before testing. Miss → one discovery pass (controller / route def, or OpenAPI), test, then write the row to
-  `<task-dir>/api-index-rows.md` (CLOSE evidence; the plane merges it at
-  CLOSE) with `discovered-by` + `last-verified-by` (task slug + date).
+  `<task-dir>/api-index-rows.md` (CLOSE evidence; the plane merges it at CLOSE) with `discovered-by` + `last-verified-by` (task slug + date).
   Never put secrets in a row — auth by reference to `api-config.env` only.
 - Server lifecycle (manual-test phase): boot the app only via
   `server.sh <slug> start` (boot command + server marker + port come
@@ -69,8 +68,10 @@ changes. Heartbeat = a worklog append, commit, or domain mtime.
   `server.sh <slug> status` is the self-check: a live server at CLOSE blocks the
   IN_REVIEW flip (see verify-duties). If `start` refuses, read its
   reason — the config is the plane's to fill, not yours to work around.
+- Manual-test (§6) runs by default: the plane charters the campaign at unit CLOSE unless a waive is on file (brief
+  `waived-by-human` or a `WAIVE` relay) — a waived brief means no manual-test phase; the worker never self-waives.
 - Declare state on change (one worklog line per transition, the worklog's last line):
-  `state: ACTIVE <phase>` when executing; `state: WAITING kind:<answer|dependency|access>
+  `state: ACTIVE <phase>` when executing; `state: WAITING kind:<answer|dependency|access|plan-approval>
   clearer:<who> since:<HH:MM>` when paused on something outside your domain; `state: BLOCKED
   kind:<decision|dependency|access|process> …` when nothing further can proceed. A state older than `STALE_AFTER` with no heartbeat routes you.
 - Before one operation expected to outlast `STALE_AFTER` (default 30 min): append `[LONG-RUN] START <operation>; checkpoint <UTC time>`, then `[LONG-RUN] DONE <operation>` (check claim + inbox before further writes).
@@ -89,12 +90,11 @@ narrative — the next session resumes from your handoff, not your memory.
 **How:**
 
 1. Run the phase gate (build/test incantation, review pass, campaign —
-   whatever the brief's DoD names) and keep its output tail.
-2. Check `git status`; commit phase work or explain each leftover.
-3. CLOSE entry + successor handoff + row flip — full shape (B1–B5 evidence
-   bullets, manual-test logging) in [close duties](worker-close.md).
-4. Keep polling while the session lives. TASK-COMPLETE / CLEANUP inbox rows end it instead
-   ([close duties](worker-close.md#task-complete--cleanup-consumption)).
+   whatever the brief's DoD names) and keep its output tail. Check `git
+   status`; commit phase work or explain each leftover.
+2. CLOSE entry + successor handoff + row flip — full shape (B1–B5 evidence
+   bullets, manual-test logging) in [close duties](worker-close.md). Keep
+   polling while the session lives; TASK-COMPLETE / CLEANUP rows end it.
 
-**Boundary surprises** (impl issues found during test, charter drift,
-suspicious code) → inbox row to the plane, never self-fix → anchor B4.
+**Boundary surprises** (impl issues found during test, charter drift, suspicious
+code) → inbox row to the plane, never self-fix → anchor B4.

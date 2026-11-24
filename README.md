@@ -1,15 +1,15 @@
-# Set-up v5.3 — anchors-based control-plane / parallel-agents workflow
+# Set-up v6.0 — anchors-based control-plane / parallel-agents workflow
 
 **Self-contained**: everything needed ships inside this folder, whatever it
 is named. Copy its contents into any project root and the workflow runs —
-no external references. `AGENTS.md` is the Codex entrypoint; `.claude/` is
-optional Claude Code integration.
+no external references. `AGENTS.md` is the Codex entrypoint; `.agent/` is the package agent-config dir
+(mapped to `.claude/` on Claude Code) and optional Claude Code integration.
 
 ```
-cp -r <this-folder>/. <target-project>/   # includes AGENTS.md, docs/workflow/, .history/, optional .claude/
+cp -r <this-folder>/. <target-project>/   # merges AGENTS.md, docs/workflow/, .history/, .agent/ (the harness maps .agent/ to its own agent-config dir at adoption — .claude/ on Claude Code)
 ```
 
-**What makes this v5**: binding lives in behavioral anchors with mechanical
+**What makes this v6**: binding lives in behavioral anchors with mechanical
 evidence (`docs/workflow/anchors.md` + the `closecheck anchors` gate), not
 in document text. Skills, plans, and process methodology are guidance.
 **What makes this v5.2**: the measurement layer — confidence labels on
@@ -58,19 +58,22 @@ line-count check enforces the cap.
   `closecheck anchors` gate is **active by default** in this package
   (v4 installs have it dormant). `selftest` proves the gates can fail —
   run it after any gate change and before adopting a package update. A
-  Claude Code PreToolUse hook (`.claude/hooks/domain-guard.sh`, wired in
-  `.claude/settings.json`) enforces the write-domain boundary before the
+  PreToolUse hook (`.agent/hooks/domain-guard.sh`, wired in
+  `.agent/settings.json`) enforces the write-domain boundary before the
+  call — workers write only under their own worktree + task dir, the plane
+  only under `.history/`, secrets and destructive shell blocked for every
+  role (see `control-plane-pm.md` §2, "PreToolUse hook").
+- **`.agent/skills/pre-test-review/`** — the pre-test review-agent skill:
   call. It is Claude-specific; Codex uses `AGENTS.md` guidance and active
   workspace permissions. This package has no native Codex domain/process
   guard.
-- **`.claude/skills/pre-test-review/`** — the pre-test review-agent skill:
   reviewer mechanics (read-first order, effort levels low/medium/high,
   review.md append protocol, pass-completion discipline, guards) so the
   plane spawns reviewers with a one-line brief instead of retyping the
   protocol. Replace `<PROJECT_REVIEW_CHECKLIST>` on adoption.
   Harness-agnostic: the body is plain instruction text any reviewer agent
   can be briefed with.
-- **`.claude/commands/`** — Claude Code convenience only: two thin slash
+- **`.agent/commands/`** — Claude Code convenience only: two thin slash
   triggers (`/control-plane`, `/worker [task-slug]`) that just load the
   corresponding instruction body. Other harnesses wire their own trigger
   mechanism to the same bodies. Codex uses the root `AGENTS.md` entrypoint;
@@ -79,10 +82,10 @@ line-count check enforces the cap.
 ## Install
 
 1. Copy the contents of this folder into the target project root. Skip
-   `.claude/` entirely on non-Claude harnesses (or replace it with your
+   `.agent/` entirely on non-Claude harnesses (or replace it with your
    harness's trigger layer pointing at `docs/workflow/*-instructions.md`;
    the pre-test-review skill body then travels as plain brief text).
-   On Claude Code installs, edit `.claude/skills/pre-test-review/SKILL.md` and
+   On adoption, edit `.agent/skills/pre-test-review/SKILL.md` and
    replace `<PROJECT_REVIEW_CHECKLIST>` with the project's failure modes.
    **Re-install over an existing install (upgrade)**: don't blind-copy —
    the running copy may already be *adopted* (checklists filled/deleted,
@@ -106,7 +109,7 @@ line-count check enforces the cap.
    path escalates to the human by design.
 3. Boot the control plane — the **first run acts as init**: no
    TASK_LIST.md means boot #1. Claude Code invokes the `workflow-init`
-   skill (`.claude/skills/workflow-init/SKILL.md`). In Codex on Windows, follow
+   skill (`.agent/skills/workflow-init/SKILL.md`). In Codex on Windows, follow
    `AGENTS.md` and run the platform's `init` script directly (Windows:
    `.history/_bin/windows/init.ps1 -Harness codex`). Both paths run the
    pre-install floor check first (`init.sh --check-only`, or Windows
@@ -177,6 +180,6 @@ docs/workflow/metrics.md                       metrics dictionary (recompute com
 .history/_templates/inbox.template.md          async inter-agent message seed
 .history/_templates/api-config.template.env    project API scaffold seed (plane copies+fills to _bin/api-config.env at init)
 .history/_bin/README.md                        fixed probes and scripts by platform
-.claude/commands/control-plane.md              /control-plane trigger (Claude Code only)
-.claude/commands/worker.md                     /worker trigger (Claude Code only)
+.agent/commands/control-plane.md              /control-plane trigger (Claude Code only)
+.agent/commands/worker.md                     /worker trigger (Claude Code only)
 ```
