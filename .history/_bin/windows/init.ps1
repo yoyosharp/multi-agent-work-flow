@@ -245,7 +245,7 @@ if (Test-Path "$Root\.history\_bin\api-config.env") {
 }
 else {
   Copy-Item "$Root\.history\_templates\api-config.template.env" "$Root\.history\_bin\api-config.env"
-  Add-Created ".history\_bin\api-config.env (from template — fill <...> values, then run api.sh login smoke test)"
+  Add-Created ".history\_bin\api-config.env (from template — fill <...> values only if this project uses api.sh, then run api.sh login smoke test)"
 }
 
 # --- 6. agent-config mapping: .agent/ (package) -> .claude/ (Claude) + worktree symlinks ---
@@ -303,7 +303,7 @@ $floorLine = "hard floor met" + $(if ($degraded.Count -gt 0) { "; soft gaps:`n" 
 "## kept", $kept,
 "## flagged", $flagged,
 "## next steps",
-"- fill .history\_bin\api-config.env <...> values, then run api.sh login smoke test",
+"- fill .history\_bin\api-config.env <...> values (only if this project uses api.sh — otherwise leave the template), then run api.sh login smoke test",
 "- fill any <...> placeholders left in the installed specs (or migrate flagged adapted rules by hand)",
 "- register the plane wake (plane-poll.ps1 at HOT_RATE) and run selftest.ps1 — expect SELFTEST-PASS",
 "- live-probe the hook once (headless out-of-domain edit must block) if this machine's CLI version was never probed"
@@ -315,5 +315,5 @@ $floorLine = "hard floor met" + $(if ($degraded.Count -gt 0) { "; soft gaps:`n" 
 if ($flagged.Count -gt 0) { "flagged:"; $flagged }
 if ($degraded.Count -gt 0) { "degraded:"; $degraded }
 "receipt: .history\_init_receipt.md"
-"next: fill api-config.env, fill <...> placeholders, register plane wake, run selftest.ps1"
+"next: fill api-config.env (only if this project uses api.sh), fill <...> placeholders, register plane wake, run selftest.ps1"
 exit 0

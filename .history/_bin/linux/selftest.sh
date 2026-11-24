@@ -1307,7 +1307,7 @@ grep -q "grep '\^host:pid '" .history/_bin/linux/lock.sh \
 
 echo "== instruction files stay under the 100-line cap (v5.3)"
 # capped = files agents read: docs/workflow/*.md + commands + skills.
-# OPTIMIZATIONS.md and README.md are human-facing, deliberately uncapped.
+# README.md is human-facing, deliberately uncapped.
 cap_over() { wc -l docs/workflow/*.md "$AGENT_DIR"/commands/*.md \
   "$AGENT_DIR"/skills/*/SKILL.md 2>/dev/null \
   | awk '$1 > 100 && $2 != "total" {print $2 " (" $1 ")"}'; }

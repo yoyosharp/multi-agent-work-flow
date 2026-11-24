@@ -306,7 +306,7 @@ if [ -f "$ROOT/.history/_bin/api-config.env" ]; then
     || note_flagged "api-config.env has no MT_BOOT_CMD/MT_SERVER_MATCH — add them (see api-config.template.env) by hand; server.sh start refuses without them"
 else
   cp "$ROOT/.history/_templates/api-config.template.env" "$ROOT/.history/_bin/api-config.env"
-  note_created ".history/_bin/api-config.env (from template — fill <...> values, then run api.sh login smoke test)"
+  note_created ".history/_bin/api-config.env (from template — fill <...> values only if this project uses api.sh, then run api.sh login smoke test)"
 fi
 
 # --- 6. agent-config mapping: .agent/ (package) -> .claude/ (Claude) + worktree symlinks ---
@@ -365,7 +365,7 @@ RECEIPT="$ROOT/.history/_init_receipt.md"
   echo "## kept$kept"
   echo "## flagged$flagged"
   echo "## next steps"
-  echo "- fill .history/_bin/api-config.env <...> values, then run api.sh login smoke test"
+  echo "- fill .history/_bin/api-config.env <...> values (only if this project uses api.sh — otherwise leave the template), then run api.sh login smoke test"
   echo "- fill any <...> placeholders left in the installed specs (or migrate flagged adapted rules by hand)"
   echo "- register the plane wake (plane-poll.sh at HOT_RATE) and run selftest.sh — expect SELFTEST-PASS"
   echo "- live-probe the hook once (headless out-of-domain edit must block) if this machine's CLI version was never probed"
@@ -377,5 +377,5 @@ echo "kept:$kept"
 [ -n "$flagged" ] && echo "flagged:$flagged"
 [ -n "$degraded" ] && echo "degraded:$degraded"
 echo "receipt: .history/_init_receipt.md"
-echo "next: fill api-config.env, fill <...> placeholders, register plane wake, run selftest.sh"
+echo "next: fill api-config.env (only if this project uses api.sh), fill <...> placeholders, register plane wake, run selftest.sh"
 exit 0

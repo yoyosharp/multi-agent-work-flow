@@ -179,7 +179,7 @@ else { "  SELFTEST-FAIL: take wrote a malformed host:pid line ($first)"; $fail =
 "== instruction files stay under the 100-line cap (v5.3)"
 # capped = files agents read: docs/workflow, commands, skills.
 $AgentDir = if (Test-Path .agent) { '.agent' } else { '.claude' }
-# OPTIMIZATIONS.md and README.md are human-facing, deliberately uncapped.
+# README.md is human-facing, deliberately uncapped.
 function Get-CapOver {
   $over = @()
   foreach ($glob in 'docs\\workflow\\*.md',"$AgentDir\\commands\\*.md","$AgentDir\\skills\\*\\SKILL.md") {

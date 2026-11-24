@@ -15,8 +15,7 @@ in document text. Skills, plans, and process methodology are guidance.
 **What makes this v5.2**: the measurement layer — confidence labels on
 claims, declared worker states with a blocked-first board, a metrics
 dictionary, fails-closed brief readiness, a gate self-test, and a
-claims-checked counter (adopted from the NamiQ AI SDLC playbook; see
-`OPTIMIZATIONS.md`). **What makes this v5.3**: instruction-length
+claims-checked counter (adopted from the NamiQ AI SDLC playbook). **What makes this v5.3**: instruction-length
 discipline — every agent-facing instruction file stays ≤100 lines, with
 detailed duties branched into linked sub-files (`verify-duties.md`,
 `worker-close.md`) instead of growing the main bodies; a selftest
@@ -171,10 +170,10 @@ line-count check enforces the cap.
    surface as `unknown command`.
    On Windows, also run `powershell -NoProfile -ExecutionPolicy Bypass
    -File .\run-server-matrix.ps1`; it exercises the PowerShell server
-   lifecycle without WSL, Python, curl, tmux, or Bash. Results and the
-   Windows-only skips are recorded in `PROBE-RESULTS-WINDOWS.md`.
+   lifecycle without WSL, Python, curl, tmux, or Bash. Results print to
+   stdout; the Windows-only skips are reported inline.
 5. **Existing v4 installs adopting v5**: read `docs/workflow/anchors.md`
-   and the v5 change list in `OPTIMIZATIONS.md` first, then port doc
+   first, then port doc
    deltas per step 1 and sync `_bin/`. The v4 dormant `anchors` gate
    activates by installing this package's `closecheck` (or uncommenting
    the gate block in the v4 script). Both role bodies and the brief

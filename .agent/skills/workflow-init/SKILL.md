@@ -32,10 +32,16 @@ only the judgement parts yourself. Never improvise the file layout.
    adapted file or `.history/_bin/api-config.env`, and prints an
    `INIT-RECEIPT`. Read `.history/_init_receipt.md` — it is the
    record of what was created, kept, flagged, and degraded.
-3. **Fill the project values.** `api-config.env`: replace every
-   `<...>` with the project's base URL, account, session header,
-   envelope, and auth endpoints; then run one `api.sh login` smoke
-   test. The template's worked example is a reference, not values.
+3. **Fill the project values — only if this project uses `api.sh`.**
+   `api.sh` is the manual-test API driver; only it needs the values.
+   If workers will call the project's API during manual tests, fill
+   `api-config.env`: replace every `<...>` with the project's base
+   URL, account, session header, envelope, and auth endpoints; then
+   run one `api.sh login` smoke test. If the project does not use
+   `api.sh`, leave `api-config.env` as the template — init is complete
+   without it. Fill it later, when the API is actually needed, and run
+   the login smoke test then. The template's worked example is a
+   reference, not values.
 4. **Adoption checklists.** Fill every `<...>` placeholder left in
    the installed specs; delete checklist blocks that do not apply.
    Anything the receipt FLAGGED as adapted must go to the human for
@@ -57,6 +63,8 @@ only the judgement parts yourself. Never improvise the file layout.
 - `tick.sh --diff` twice: the second run prints nothing.
 - `status.sh` runs; `grep -r '<\.\.\.>' docs/workflow/ .history/TASK_LIST.md`
   finds no leftover placeholders (excluding templates).
+- Unfilled `api-config.env` does not block init: it is only required
+  when the project uses `api.sh` (step 3 above).
 - The receipt lists no FLAGGED item you have not either fixed or
   surfaced to the human, and no DEGRADED item you have not reported.
 

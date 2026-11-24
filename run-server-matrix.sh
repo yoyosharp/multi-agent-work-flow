@@ -2,7 +2,8 @@
 # run-server-matrix.sh — v6 track F live probe (work machine, automated half).
 # Usage: run-server-matrix.sh [project-root]   (default: current dir)
 # Builds a scratch project under <root>/server-probe-scratch, runs tests 1-6
-# from PROBE.md, prints PROBE-PASS/PROBE-FAIL per test. Read-only against
+# (manual tests 7-11 are listed inline at the end of this file), prints
+# PROBE-PASS/PROBE-FAIL per test. Read-only against
 # the real install except the scratch dir; kills only processes it started
 # (pids from pidfiles, cmdline-guarded, explicit PID only — never pkill -f
 # with a self-matching pattern). Requires: v6 tree at <root> (server.sh,
@@ -19,7 +20,8 @@ PLAT="$(basename "$BIN")"
 HOOK="$ROOT/.agent/hooks/domain-guard.sh"
 # Fail fast: the probe needs a real v6 tree (fresh extract, after init).
 # Without this the cp below fails silently and every later test
-# misreports. Usage: run-server-matrix.sh [project-root] (see PROBE.md).
+# misreports. Usage: run-server-matrix.sh [project-root] (manual tests 7-11
+# are listed inline at the end of this file).
 for req in "$BIN/server.sh" "$HOOK"; do
   [ -f "$req" ] || { echo "PROBE-FAIL: $req not found — pass the fresh v6 extract as [project-root]"; exit 1; }
 done
@@ -153,4 +155,47 @@ kill "$reusepid" 2>/dev/null || true
 
 echo "== result: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] && echo "PROBE-PASS: automated half green" || echo "PROBE-FAIL: $fail automated test(s) failed"
-echo "Next: manual tests 7-11 in PROBE.md — record them in PROBE-RESULTS.md"
+echo "Next: manual tests 7-11 are listed inline at the end of this file — record them in PROBE-RESULTS.md"
+
+# --- Manual tests 7-11 (moved inline from PROBE.md, deleted in v6.4.1) ---
+# Still pending live verification on the work machine. Record outcomes in
+# PROBE-RESULTS.md (a results file you create when running the probe).
+# ## Manual tests (record by hand)
+#
+# 7. **Real CLI kill-gate firing + harness pre-grant**: in a live
+#    worker session (tmux, `WORKFLOW_ROLE=worker`, a real task slug
+#    holding the manual-test token), run (a) raw `kill <pid>` — which
+#    layer blocks first, the harness or the hook, and what does the
+#    agent see in each case? Record the exact message. (b) the blessed
+#    `.history/_bin/linux/server.sh <slug> stop` — does the harness
+#    pre-grant work (no prompt)? Record whether any prompt appeared.
+#    (c) the forged-pidfile attack live: put the **plane's pid** (from
+#    `plane.lock`, `host:pid` — informational) in the pidfile with a
+#    forged cmdline field, run the blessed stop — hook + script must
+#    refuse; verify the plane is alive afterwards. (If the plane's pid
+#    is unavailable, use a long-lived `sleep` as the victim instead and
+#    say so.)
+# 8. **Real server lifecycle in a manual-test flow**: start the REAL app
+#    server via `server.sh <slug> start` (`MT_BOOT_CMD` filled for the
+#    real app), run a manual-test-style flow (an `api.sh` call against
+#    it), stop via `server.sh <slug> stop`, verify the process is gone
+#    and nothing else died (plane + sibling workers still alive).
+# 9. **Session-end leak — OBSERVATION ONLY, do not build anything**:
+#    start a server, then "forget" to stop it: write a CLOSE entry and
+#    run the ratify check (`server.sh <slug> status` at CLOSE). Does the
+#    IN_REVIEW flip block? Does anything clean the server up afterwards
+#    (Stop hook? plane? nothing — is it still running an hour later)?
+#    Record the behavior and whether a Stop-hook cleanup is needed.
+#    Do NOT build the cleanup hook here — this test only records what
+#    happens.
+# 10. **Port-ownership check on the work machine**: does the port check
+#     work here? Record: is `/proc/net/tcp` readable? What does
+#     `ss -ltnp` show for the task port while the server runs? What does
+#     `lsof -iTCP:<port> -sTCP:LISTEN -t` print? Note which mechanism
+#     the script used and whether any of them is missing.
+# 11. **Hook performance**: the kill-gate runs on every Bash call. Time
+#     20 synthetic hook invocations on a plain command
+#     (`printf '{"tool_name":"Bash","tool_input":{"command":"echo hi"},"cwd":"<worktree>"}' | WORKFLOW_ROLE=worker WORKFLOW_SLUG=<slug> bash .claude/hooks/domain-guard.sh`)
+#     and record the total; in the live session, record whether plain
+#     Bash calls felt slower than before the gate. If a slowdown is
+#     noticed, include the timings — do not guess a number.
