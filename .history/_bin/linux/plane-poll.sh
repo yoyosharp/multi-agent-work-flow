@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # One scheduled control-plane poll: change probe plus due time-based scans.
+# v6.1 shutdown: a stop marker (.history/._watcher_stop) means the plane shut
+# down — the poll exits at once (no tick, no scans, no watcher restart).
 # Usage: plane-poll.sh [--stale-now] [--relays-now]
 set -u
 cd "$(dirname "$0")/../../.." || exit 1
+
+[ -f .history/._watcher_stop ] && { echo "plane-poll: stop marker present — exiting"; exit 0; }
 
 stale_now=0
 relays_now=0

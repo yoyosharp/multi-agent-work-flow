@@ -1,8 +1,13 @@
 ﻿# One scheduled control-plane poll: change probe plus due time-based scans.
+# v6.1 shutdown: a stop marker (.history/._watcher_stop) means the plane shut
+# down — the backstop exits at once (no tick, no scans). No watcher on
+# Windows; this is the backstop half of the stop only.
 # Usage: plane-poll.ps1 [-StaleNow] [-RelaysNow]
 param([switch]$StaleNow, [switch]$RelaysNow)
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..\..\..')
+
+if (Test-Path '.history\._watcher_stop') { "plane-poll: stop marker present — exiting"; exit 0 }
 
 $schedule = '.history\._poll_schedule'
 New-Item -ItemType Directory -Path $schedule -Force | Out-Null

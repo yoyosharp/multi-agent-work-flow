@@ -12,8 +12,7 @@ rules](parallel-agents.md). You verify anchor evidence, not methodology.
 
 1. Acquire `.history/plane.lock`; fresher than `LOCK_STALE` → alert, stop without edits. Stale-lock takeover requires verifying the recorded process
    (cwd/cmdline) — unverifiable identity → human escalation, never takeover.
-2. If `TASK_LIST.md` is absent, initialize via the `workflow-init` skill (`.agent/skills/workflow-init/SKILL.md`): pre-install floor check
-   first, then `init.sh` — it creates the dirs/files, gitignores, pointer
+2. If `TASK_LIST.md` is absent, initialize via the `workflow-init` skill (`.agent/skills/workflow-init/SKILL.md`): pre-install floor check first, then `init.sh` — it creates the dirs/files, gitignores, pointer
    block, TASK_LIST seed, and api-config. Never rewrite adapted rules —
    the skill flags them for human migration.
 3. Sweep task ledgers: ratify/deny DECLARED claims immediately; assess active
@@ -22,7 +21,7 @@ rules](parallel-agents.md). You verify anchor evidence, not methodology.
 4. Route declared states (`state:` lines via `status.sh`): answer every BLOCKED row within one poll cycle — to its `clearer` or cleared; carrying one
    silently is a plane failure; WAITING rows once older than `STALE_AFTER`;
    tally `kind:process` separately (workflow defects feed the retrospective).
-5. Start the event-driven wake: run `.history/_bin/<platform>/plane-watch.sh`
+5. Clear spent shutdown markers first (`.history/SHUTDOWN.md`, `.history/._watcher_stop`) — a stale signal would stop workers that just booted. Start the event-driven wake: run `.history/_bin/<platform>/plane-watch.sh`
    in the background (watches `.history/`, debounces 15 s, wakes you via tmux
    only on a non-empty diff) and register a **durable** backstop wake every
    30 min (`plane-poll.sh`, Windows: `plane-poll.ps1`) — the backstop also
@@ -37,8 +36,7 @@ diff probe, `plane.lock` refresh, time-gated stale/relay scans. On changed outpu
 inspect named files and apply [async-inputs.md](async-inputs.md). Before a
 conflicting grant, force a stale scan (`--stale-now` / `-StaleNow`) and verify candidates first.
 
-After CLOSE, assign the next phase in the worker inbox only if the charter
-authorizes it; otherwise ask the human. Manual-test (§6) is the exception: it is
+After CLOSE, assign the next phase in the worker inbox only if the charter authorizes it; otherwise ask the human. Manual-test (§6) is the exception: it is
 charter-authorized by default — at unit CLOSE a waive on file (charter `waived-by-human`
 or a `WAIVE` relay) skips the campaign (record WAIVED); without one, charter the
 campaign — never stop to ask. Append observations to worklogs; never
@@ -97,4 +95,6 @@ auto-release — human may be mid-edit ([core spec §2](control-plane-pm.md)).
 ## 5. Stop the plane
 
 Write `released <timestamp>` to `.history/plane.lock` and delete your durable
-wake — the singleton must stay free for a future boot.
+wake — the singleton must stay free for a future boot. For a coordinated shutdown of live workers, run `/shutdown` instead (command
+file `.agent/commands/shutdown.md`) — it broadcasts, waits bounded, stops
+servers and the watcher, then does this step.

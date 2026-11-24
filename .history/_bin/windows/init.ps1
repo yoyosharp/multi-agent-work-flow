@@ -225,8 +225,8 @@ else {
 # The package ships the harness-neutral .agent/ dir. Claude Code reads
 # .claude/, so init copies .agent/ -> .claude/ when .claude/ is missing.
 # On re-run over an adopted .claude/ (checklists filled), init never
-# overwrites it — it only copies skill dirs missing there, so a package
-# upgrade still delivers new skills. Codex needs no .claude/ mapping
+# overwrites it — it only copies skill dirs and command files missing there,
+# so a package upgrade still delivers new skills and commands. Codex needs no .claude/ mapping
 # (AGENTS.md entrypoint).
 if ($Harness -eq "claude") {
   if ((Test-Path "$Root\.agent") -and (-not (Test-Path "$Root\.claude"))) {
@@ -235,6 +235,14 @@ if ($Harness -eq "claude") {
     foreach ($s in Get-ChildItem "$Root\.agent\skills" -Directory -ErrorAction SilentlyContinue) {
       if (-not (Test-Path "$Root\.claude\skills\$($s.Name)")) {
         Copy-Item -Recurse $s.FullName "$Root\.claude\skills\$($s.Name)"; Add-Created ".claude\skills\$($s.Name)\ (new skill from package .agent\)"
+      }
+    }
+    # v6.1: same never-overwrite policy for command files — a new command
+    # (e.g. /shutdown) must reach an upgraded install, not just fresh ones.
+    foreach ($c in Get-ChildItem "$Root\.agent\commands" -File -Filter *.md -ErrorAction SilentlyContinue) {
+      if (-not (Test-Path "$Root\.claude\commands\$($c.Name)")) {
+        if (-not (Test-Path "$Root\.claude\commands")) { New-Item -ItemType Directory -Path "$Root\.claude\commands" | Out-Null }
+        Copy-Item $c.FullName "$Root\.claude\commands\$($c.Name)"; Add-Created ".claude\commands\$($c.Name) (new command from package .agent\)"
       }
     }
     Add-Kept ".claude/ present (adopted — never overwritten)"

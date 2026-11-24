@@ -23,9 +23,9 @@
 #   of inotifywait/fswatch; a quiet gap fires one check, EOF ends the run.
 #   Used by selftest — the event tool itself needs no live test here.
 # Env: PLANE_WATCH_DEBOUNCE (default 15 s), PLANE_AGENT_CMD (default claude).
-# Exit 0 = ended cleanly (signal / stdin EOF in test mode); exit 2 = watcher
-# tool missing (degraded: backstop only — the workflow still works);
-# exit 1 = bad args / no .history/.
+# Exit 0 = ended cleanly (signal / stdin EOF in test mode / stop marker);
+# exit 2 = watcher tool missing (degraded: backstop only — the workflow
+# still works); exit 1 = bad args / no .history/.
 #
 # Safety (design draft §7a/§7b): a pane is NEVER guessed — it comes from
 # .history/._plane_pane (plane, written by the backstop) or
@@ -38,6 +38,13 @@
 # Self-triggering is excluded: _tick_snapshots, _poll_schedule, board.html,
 # _plane_pane, _worker_panes, _watcher_state, _watcher.log, _watcher_inbox,
 # _selftest.
+# Shutdown (v6.1): the plane ends the watcher by creating
+# .history/._watcher_stop. The watcher checks it at startup and at the top
+# of every cycle and exits 0 on it — never killed. The marker's own creation
+# is NOT watch-excluded, so it wakes the read and the watcher exits at once.
+# The watcher stays alive through the shutdown wait (step 4) so the SHUTDOWN
+# inbox wake is still delivered. Marker vs signal: ._watcher_stop stops the
+# watcher; .history/SHUTDOWN.md signals the workers — different files.
 set -u
 
 ROOT="${1:-}"
@@ -177,12 +184,18 @@ else
   exec 3<&0
 fi
 
+# v6.1 shutdown: a stop marker means the plane shut down — do not start
+# (checked before the state write, so a stillborn watcher leaves no state).
+if [ -f "$ROOT/.history/._watcher_stop" ]; then log "stop marker present — watcher not starting"; exit 0; fi
 printf 'pid=%s\nstarted=%s\ntool=%s\n' "$$" "$(date '+%F %T')" "$([ "$TEST_MODE" = 1 ] && echo test-mode || echo "$PLATFORM")" > "$STATE"
 log "watcher started (pid $$, debounce ${DEBOUNCE}s, mode $([ "$TEST_MODE" = 1 ] && echo test || echo "$PLATFORM"))"
 trap 'log "watcher stopping"; exit 0' TERM INT
 
 pending=0
 while true; do
+  # v6.1 shutdown: exit at the top of every cycle when the stop marker
+  # appears (its creation wakes the read below, so this fires at once).
+  if [ -f "$ROOT/.history/._watcher_stop" ]; then log "stop marker present — watcher stopping"; exit 0; fi
   # NB: capture read's status directly — `$?` after an `if` is 0 when the
   # condition is false, so the old `if read...; then...; fi; rc=$?` read 0
   # forever and spun. read returns 0 = line, 1 = EOF, >128 = timeout.

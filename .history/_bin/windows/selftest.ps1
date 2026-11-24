@@ -206,6 +206,51 @@ if ((Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern 'never sto
 else { "  SELFTEST-FAIL: §6 lost the default-campaign rule"; $fail = 1 }
 if (Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern 'pending decision, not an answer' -Quiet) { "  SELFTEST-FAIL: stale §6 blocking-wait wording present in pm.md"; $fail = 1 }
 else { "  ok: no stale §6 blocking-wait wording in pm.md" }
+
+"== /shutdown (v6.1): plane-only command, watcher/backstop stop, release flow"
+# Windows-run-only for the behavioral parts (no PowerShell host on the
+# build machine); the static assertions run wherever the file is read.
+if ((Test-Path (Join-Path $AgentDir 'commands\shutdown.md')) -and (Select-String -Path (Join-Path $AgentDir 'commands\shutdown.md') -Pattern 'WORKFLOW_ROLE=plane' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'commands\shutdown.md') -Pattern 'refuses' -Quiet)) { "  ok: shutdown command present with the plane-only role check" }
+else { "  SELFTEST-FAIL: shutdown command missing or lost the plane-only role check"; $fail = 1 }
+# the marker is plane-only by hook rule 3 (bash hook — no Windows port, so
+# the denial is proven by the linux/mac selftest, not here).
+if (Select-String -Path (Join-Path $bin 'plane-poll.ps1') -Pattern '_watcher_stop' -Quiet) { "  ok: plane-poll.ps1 checks the stop marker" }
+else { "  SELFTEST-FAIL: plane-poll.ps1 has no stop-marker check"; $fail = 1 }
+# plane-poll exits at once on the stop marker (fixture: scratch tree
+# carrying the script; tick.ps1 fails with no lock, so the baseline is
+# nonzero and the marker run must be 0 with no schedule dir).
+$pp = Join-Path $work 'shutdown-poll-root'
+New-Item -ItemType Directory -Path "$pp\.history\_bin\windows" -Force | Out-Null
+Copy-Item (Join-Path $bin 'plane-poll.ps1') "$pp\.history\_bin\windows\plane-poll.ps1"
+Copy-Item (Join-Path $bin 'tick.ps1') "$pp\.history\_bin\windows\tick.ps1"
+$null = & powershell -File "$pp\.history\_bin\windows\plane-poll.ps1" 2>$null; $ppCode = $LASTEXITCODE
+if ($ppCode -ne 0) { "  ok: without the marker, plane-poll runs tick and fails with no lock" }
+else { "  SELFTEST-FAIL: plane-poll passed with no lock — the no-marker baseline is broken"; $fail = 1 }
+$pp2 = Join-Path $work 'shutdown-poll-root2'
+New-Item -ItemType Directory -Path "$pp2\.history\_bin\windows" -Force | Out-Null
+Copy-Item (Join-Path $bin 'plane-poll.ps1') "$pp2\.history\_bin\windows\plane-poll.ps1"
+Copy-Item (Join-Path $bin 'tick.ps1') "$pp2\.history\_bin\windows\tick.ps1"
+New-Item -ItemType File -Path "$pp2\.history\._watcher_stop" -Force | Out-Null
+$null = & powershell -File "$pp2\.history\_bin\windows\plane-poll.ps1" 2>$null; $ppCode = $LASTEXITCODE
+if ($ppCode -eq 0) { "  ok: plane-poll exits 0 on the stop marker without running tick" }
+else { "  SELFTEST-FAIL: plane-poll did not exit cleanly on the stop marker"; $fail = 1 }
+if (-not (Test-Path "$pp2\.history\._poll_schedule")) { "  ok: plane-poll with the marker runs no scans (no schedule dir)" }
+else { "  SELFTEST-FAIL: plane-poll with the marker still ran scans"; $fail = 1 }
+# worker release flow on the shutdown signal (fixture: signal -> checkpoint
+# -> RELEASED -> session-end log), as the plane observes it.
+$sd = Join-Path $work 'shutdown-release'
+New-Item -ItemType Directory -Path "$sd\.history\2026-11-11-demo" -Force | Out-Null
+Set-Content -Path "$sd\.history\2026-11-11-demo\worklog.md" -Value "2026-11-11 10:00 — worker: executing`nstate: ACTIVE impl"
+Set-Content -Path "$sd\.history\2026-11-11-demo\workers.md" -Value "| # | Worker | Host:Pid | Launched-by | Phase | Method | Commitment | Write domain | Resource tokens | Claimed-at | Status | Granted-at | Notes |`n|---|---|---|---|---|---|---|---|---|---|---|---|---|`n| 1 | w1 | host:1 | plane | impl | md | c1 | src/test/** | manual-test | 2026-11-11 10:00 | EXECUTING | 2026-11-11 10:01 | |"
+Set-Content -Path "$sd\.history\2026-11-11-demo\inbox.md" -Value "inbox for demo"
+Set-Content -Path "$sd\.history\SHUTDOWN.md" -Value "SHUTDOWN — operator shutdown`nat 2026-11-11 10:30 UTC by plane host:1"
+Add-Content -Path "$sd\.history\2026-11-11-demo\inbox.md" -Value "SHUTDOWN — operator shutdown"
+(Get-Content "$sd\.history\2026-11-11-demo\workers.md") -replace 'EXECUTING','RELEASED' | Set-Content -Path "$sd\.history\2026-11-11-demo\workers.md"
+Add-Content -Path "$sd\.history\2026-11-11-demo\worklog.md" -Value "2026-11-11 10:31 — shutdown: current step committed; B3 checkpoint: impl done through Foo, tests pending, resume at Bar`n2026-11-11 10:31 session end — shutdown"
+if (-not (Select-String -Path "$sd\.history\2026-11-11-demo\workers.md" -Pattern '\| (EXECUTING|GRANTED) \|' -Quiet)) { "  ok: after the signal, no live claim rows remain (plane wait terminates)" }
+else { "  SELFTEST-FAIL: a live claim row survived the shutdown release"; $fail = 1 }
+if ((Select-String -Path "$sd\.history\2026-11-11-demo\worklog.md" -Pattern 'session end — shutdown' -Quiet) -and (Select-String -Path "$sd\.history\2026-11-11-demo\worklog.md" -Pattern 'B3 checkpoint' -Quiet) -and (Select-String -Path "$sd\.history\2026-11-11-demo\inbox.md" -Pattern '^SHUTDOWN — ' -Quiet)) { "  ok: shutdown release leaves the B3 checkpoint + session-end log + inbox row" }
+else { "  SELFTEST-FAIL: shutdown release is missing checkpoint, session-end log, or inbox row"; $fail = 1 }
 Remove-Item -Recurse -Force $work
 Remove-Item -Recurse -Force $rg
 if ($fail -eq 0) { "SELFTEST-PASS: every gate demonstrated failing and passing"; exit 0 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# domain-guard.sh — PreToolUse hook for v5.4 (domain enforcement + deny rules).
+# domain-guard.sh — PreToolUse hook for v6.1 (domain enforcement + deny rules).
 #
 # Contract: the agent CLI runs this before every matched tool call
 # (matcher: Edit|Write|Read|Bash, wired in the agent-config settings — .agent/settings.json pre-adoption, .claude/settings.json on Claude Code).
@@ -356,6 +356,10 @@ fi
 if [ "$TOOL" = "Edit" ] || [ "$TOOL" = "Write" ]; then
   [ -n "$FPATH" ] || exit 0
   APATH=$(norm "$FPATH")
+  # Out-of-repo paths are outside the workflow's jurisdiction: allow.
+  # (A helper writing its own memory under ~/.claude/projects/ is not a
+  # plane write. Rule 1 secrets above still apply.)
+  under "$APATH" "$ROOT" || exit 0
   if [ "$ROLE" = "plane" ]; then
     under "$APATH" "$ROOT/.history" || deny "plane may write only under .history/: $FPATH"
   else

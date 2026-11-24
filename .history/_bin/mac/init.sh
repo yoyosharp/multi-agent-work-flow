@@ -268,8 +268,8 @@ fi
 # The package ships the harness-neutral .agent/ dir. Claude Code reads
 # .claude/, so init copies .agent/ -> .claude/ when .claude/ is missing.
 # On re-run over an adopted .claude/ (checklists filled), init never
-# overwrites it — it only copies skill dirs missing there, so a package
-# upgrade still delivers new skills. Other harnesses map .agent/ to
+# overwrites it — it only copies skill dirs and command files missing there,
+# so a package upgrade still delivers new skills and commands. Other harnesses map .agent/ to
 # their own dir at adoption (Codex: AGENTS.md entrypoint, no .claude/).
 if [ -d "$ROOT/.agent" ] && [ ! -d "$ROOT/.claude" ]; then
   cp -r "$ROOT/.agent" "$ROOT/.claude" && chmod +x "$ROOT/.claude/hooks/domain-guard.sh" 2>/dev/null \
@@ -282,6 +282,18 @@ elif [ -d "$ROOT/.agent" ] && [ -d "$ROOT/.claude" ]; then
       cp -r "$s" "$ROOT/.claude/skills/$skill" && note_created ".claude/skills/$skill/ (new skill from package .agent/)"
     fi
   done
+  # v6.1: same never-overwrite policy for command files — a new command
+  # (e.g. /shutdown) must reach an upgraded install, not just fresh ones.
+  if [ -d "$ROOT/.agent/commands" ]; then
+    mkdir -p "$ROOT/.claude/commands" 2>/dev/null
+    for c in "$ROOT/.agent/commands/"*.md; do
+      [ -f "$c" ] || continue
+      cmd="$(basename "$c")"
+      if [ ! -f "$ROOT/.claude/commands/$cmd" ]; then
+        cp "$c" "$ROOT/.claude/commands/$cmd" && note_created ".claude/commands/$cmd (new command from package .agent/)"
+      fi
+    done
+  fi
   note_kept ".claude/ present (adopted — never overwritten)"
 fi
 if [ -d "$ROOT/.claude" ]; then

@@ -163,6 +163,9 @@ wt="$hr/.worktree/demo"
 [ "$(hook plane "" "$(j_edit "$hr/.history/TASK_LIST.md" "$hr")")" = 0 ] \
   && ok "hook allows the plane to write under .history/" \
   || bad "hook blocked the plane's own .history/ write"
+[ "$(hook plane "" "$(j_edit "$HOME/.claude/projects/abc/memory.md" "$hr")")" = 0 ] \
+  && ok "hook allows an out-of-repo edit (memory path)" \
+  || bad "hook blocked an out-of-repo edit — over-reach (v6.1 fix)"
 [ "$(WORKFLOW_ROOT="$hr" WF_ROLE=worker WF_SLUG=demo bash "$AGENT_DIR/hooks/domain-guard.sh" <<< "$(j_edit "$wt/src/test/FooTest.java" "$wt")" 2>/dev/null; echo $?)" = 0 ] \
   && ok "hook accepts WF_ROLE/WF_SLUG fallback aliases" \
   || bad "hook rejected the WF_* role/slug aliases"
@@ -170,7 +173,8 @@ wt="$hr/.worktree/demo"
 echo "== workflow-init (v6): fresh init, re-run, non-git abort"
 iprobe="$work/init-probe"
 mkdir -p "$iprobe/.history/_templates" "$iprobe/.history/_bin"
-cp -r docs .agent "$iprobe/"
+cp -r docs "$AGENT_DIR" "$iprobe/"
+[ "$AGENT_DIR" = ".agent" ] || mv "$iprobe/$AGENT_DIR" "$iprobe/.agent"
 cp -r .history/_templates/* "$iprobe/.history/_templates/"
 cp -r .history/_bin/linux "$iprobe/.history/_bin/linux"
 git init -q "$iprobe"
@@ -240,7 +244,8 @@ grep -qE 'Authorization:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._-]{8,}|eyJ[A-Z
 # migration: blanket line + user lines → re-run replaces exactly the blanket line.
 mprobe="$work/mig-probe"
 mkdir -p "$mprobe/.history/_templates" "$mprobe/.history/_bin"
-cp -r docs .agent "$mprobe/"
+cp -r docs "$AGENT_DIR" "$mprobe/"
+[ "$AGENT_DIR" = ".agent" ] || mv "$mprobe/$AGENT_DIR" "$mprobe/.agent"
 cp -r .history/_templates/* "$mprobe/.history/_templates/"
 cp -r .history/_bin/linux "$mprobe/.history/_bin/linux"
 git init -q "$mprobe"
@@ -510,7 +515,8 @@ rm -f "$stask/server.sh"
   || bad "init left server.sh non-executable"
 ocprobe="$work/oldcfg-probe"
 mkdir -p "$ocprobe/.history/_templates" "$ocprobe/.history/_bin"
-cp -r docs .agent "$ocprobe/"
+cp -r docs "$AGENT_DIR" "$ocprobe/"
+[ "$AGENT_DIR" = ".agent" ] || mv "$ocprobe/$AGENT_DIR" "$ocprobe/.agent"
 cp -r .history/_templates/* "$ocprobe/.history/_templates/"
 cp -r .history/_bin/linux "$ocprobe/.history/_bin/linux"
 git init -q "$ocprobe"
@@ -1038,6 +1044,111 @@ grep -q "never stops to ask" docs/workflow/control-plane-pm.md \
 ! grep -q "pending decision, not an answer" docs/workflow/control-plane-pm.md \
   && ok "no stale §6 blocking-wait wording in pm.md" \
   || bad "stale §6 blocking-wait wording present in pm.md"
+
+echo "== /shutdown (v6.1): plane-only command, marker denied to workers, watcher/poller stop"
+[ -f "$AGENT_DIR/commands/shutdown.md" ] \
+  && ok "shutdown command present under $AGENT_DIR/commands/" \
+  || bad "shutdown command missing from $AGENT_DIR/commands/"
+grep -q "WORKFLOW_ROLE=plane" "$AGENT_DIR/commands/shutdown.md" \
+  && grep -q "refuses" "$AGENT_DIR/commands/shutdown.md" \
+  && grep -q "Workers never run \`/shutdown\`" "$AGENT_DIR/commands/shutdown.md" \
+  && ok "shutdown command states the plane-only role check (refuses from a worker)" \
+  || bad "shutdown command lost the plane-only role check"
+# the marker lives at .history/ root — outside any worker's task dir, so
+# hook rule 3 already denies worker writes there (no new rule needed).
+[ "$(hook worker demo "$(j_edit "$hr/.history/SHUTDOWN.md" "$wt")")" = 2 ] \
+  && ok "hook denies a worker write to the shutdown marker path" \
+  || bad "hook allowed a worker write to .history/SHUTDOWN.md — marker not plane-only"
+[ "$(hook worker demo "$(j_edit "$hr/.history/._watcher_stop" "$wt")")" = 2 ] \
+  && ok "hook denies a worker write to the watcher stop marker" \
+  || bad "hook allowed a worker write to .history/._watcher_stop"
+[ "$(hook plane "" "$(j_edit "$hr/.history/SHUTDOWN.md" "$hr")")" = 0 ] \
+  && ok "hook allows the plane to write the shutdown marker" \
+  || bad "hook blocked the plane's shutdown marker write"
+# watcher exits on the stop marker: startup check fires before the state
+# write, and the loop-top check fires when the marker appears mid-run.
+swroot="$work/shutdown-watch-root"
+mkdir -p "$swroot/.history/_bin"
+cp -r .history/_bin/linux "$swroot/.history/_bin/linux"
+touch "$swroot/.history/._watcher_stop"
+printf '.history/2026-11-11-demo/worklog.md\n' | (cd "$swroot" && PLANE_WATCH_DEBOUNCE=1 bash .history/_bin/linux/plane-watch.sh . --test-mode >/dev/null 2>&1)
+[ -f "$swroot/.history/._watcher_state" ] \
+  && bad "watcher wrote state despite the stop marker" \
+  || ok "watcher with a stop marker starts nothing (no state file)"
+grep -q 'stop marker present — watcher not starting' "$swroot/.history/_watcher.log" \
+  && ok "watcher logs the stop marker at startup" \
+  || bad "watcher did not log the stop marker"
+swroot2="$work/shutdown-watch-root2"
+mkdir -p "$swroot2/.history/_bin"
+cp -r .history/_bin/linux "$swroot2/.history/_bin/linux"
+( printf '.history/2026-11-11-demo/worklog.md\n'; sleep 0.3; touch "$swroot2/.history/._watcher_stop"; printf '.history/2026-11-11-demo/worklog.md\n'; sleep 0.2 ) \
+  | ( cd "$swroot2" && PLANE_WATCH_DEBOUNCE=1 bash .history/_bin/linux/plane-watch.sh . --test-mode >/dev/null 2>&1 )
+[ $? -eq 0 ] && grep -q 'stop marker present — watcher stopping' "$swroot2/.history/_watcher.log" \
+  && ! grep -q 'watcher not starting' "$swroot2/.history/_watcher.log" \
+  && ok "watcher exits at the next cycle when the stop marker appears mid-run" \
+  || bad "watcher did not stop on a mid-run stop marker"
+# plane-poll exits at once on the stop marker (and runs no tick/scans).
+sproot="$work/shutdown-poll-root"
+mkdir -p "$sproot/.history/_bin"
+cp -r .history/_bin/linux "$sproot/.history/_bin/linux"
+(cd "$sproot" && bash .history/_bin/linux/plane-poll.sh >/dev/null 2>&1)
+[ $? -ne 0 ] \
+  && ok "without the marker, plane-poll runs tick and fails with no lock" \
+  || bad "plane-poll passed with no lock — the no-marker baseline is broken"
+sproot2="$work/shutdown-poll-root2"
+mkdir -p "$sproot2/.history/_bin"
+cp -r .history/_bin/linux "$sproot2/.history/_bin/linux"
+touch "$sproot2/.history/._watcher_stop"
+(cd "$sproot2" && bash .history/_bin/linux/plane-poll.sh >/dev/null 2>&1)
+[ $? -eq 0 ] \
+  && ok "plane-poll exits 0 on the stop marker without running tick" \
+  || bad "plane-poll did not exit cleanly on the stop marker"
+[ ! -d "$sproot2/.history/._poll_schedule" ] \
+  && ok "plane-poll with the marker runs no scans (no schedule dir)" \
+  || bad "plane-poll with the marker still ran scans"
+# init re-run delivers a new command file (and never overwrites adopted ones).
+iprobe2="$work/init-probe2"
+mkdir -p "$iprobe2/.history/_templates" "$iprobe2/.history/_bin"
+cp -r docs "$AGENT_DIR" "$iprobe2/"
+[ "$AGENT_DIR" = ".agent" ] || mv "$iprobe2/$AGENT_DIR" "$iprobe2/.agent"
+cp -r .history/_templates/* "$iprobe2/.history/_templates/"
+cp -r .history/_bin/linux "$iprobe2/.history/_bin/linux"
+git init -q "$iprobe2"
+bash "$iprobe2/.history/_bin/linux/init.sh" "$iprobe2" >/dev/null 2>&1
+[ -f "$iprobe2/.claude/commands/shutdown.md" ] \
+  && ok "fresh init maps the shutdown command to .claude/commands/" \
+  || bad "fresh init did not map shutdown.md to .claude/"
+rm -f "$iprobe2/.claude/commands/shutdown.md"
+printf '\n<!-- adopted-marker -->\n' >> "$iprobe2/.claude/commands/control-plane.md"
+bash "$iprobe2/.history/_bin/linux/init.sh" "$iprobe2" >/dev/null 2>&1
+[ -f "$iprobe2/.claude/commands/shutdown.md" ] && grep -q 'adopted-marker' "$iprobe2/.claude/commands/control-plane.md" \
+  && ok "init re-run restores a missing command file and leaves adopted files alone" \
+  || bad "init re-run did not restore shutdown.md or overwrote an adopted command"
+# worker release flow on the shutdown signal (fixture: signal -> checkpoint
+# -> RELEASED -> session-end log). The steps are the worker's prescribed
+# actions as the plane observes them; the plane's wait terminates on the
+# RELEASED rows and the session-end log line.
+sdroot="$work/shutdown-release"
+mkdir -p "$sdroot/.history/2026-11-11-demo"
+printf '2026-11-11 10:00 — worker: executing\nstate: ACTIVE impl\n' > "$sdroot/.history/2026-11-11-demo/worklog.md"
+printf '%s\n' \
+  '| # | Worker | Host:Pid | Launched-by | Phase | Method | Commitment | Write domain | Resource tokens | Claimed-at | Status | Granted-at | Notes |' \
+  '|---|---|---|---|---|---|---|---|---|---|---|---|---|' \
+  '| 1 | w1 | host:1 | plane | impl | md | c1 | src/test/** | manual-test | 2026-11-11 10:00 | EXECUTING | 2026-11-11 10:01 | |' \
+  > "$sdroot/.history/2026-11-11-demo/workers.md"
+printf 'inbox for demo\n' > "$sdroot/.history/2026-11-11-demo/inbox.md"
+printf 'SHUTDOWN — operator shutdown\nat 2026-11-11 10:30 UTC by plane host:1\n' > "$sdroot/.history/SHUTDOWN.md"
+printf 'SHUTDOWN — operator shutdown\n' >> "$sdroot/.history/2026-11-11-demo/inbox.md"
+sed -i 's/EXECUTING/RELEASED/' "$sdroot/.history/2026-11-11-demo/workers.md"
+printf '2026-11-11 10:31 — shutdown: current step committed; B3 checkpoint: impl done through Foo, tests pending, resume at Bar\n2026-11-11 10:31 session end — shutdown\n' >> "$sdroot/.history/2026-11-11-demo/worklog.md"
+! grep -qE '\| (EXECUTING|GRANTED) \|' "$sdroot/.history/2026-11-11-demo/workers.md" \
+  && ok "after the signal, no live claim rows remain (plane wait terminates)" \
+  || bad "a live claim row survived the shutdown release"
+grep -q 'session end — shutdown' "$sdroot/.history/2026-11-11-demo/worklog.md" \
+  && grep -q 'B3 checkpoint' "$sdroot/.history/2026-11-11-demo/worklog.md" \
+  && grep -q '^SHUTDOWN — ' "$sdroot/.history/2026-11-11-demo/inbox.md" \
+  && ok "shutdown release leaves the B3 checkpoint + session-end log + inbox row" \
+  || bad "shutdown release is missing checkpoint, session-end log, or inbox row"
 rm -rf "$work" ".history/relay-gate-selftest"
 if [ $fail -eq 0 ]; then echo "SELFTEST-PASS: every gate demonstrated failing and passing"
 else echo "SELFTEST-FAIL: one or more gates unproven"; fi

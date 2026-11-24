@@ -73,8 +73,9 @@ line-count check enforces the cap.
   protocol. Replace `<PROJECT_REVIEW_CHECKLIST>` on adoption.
   Harness-agnostic: the body is plain instruction text any reviewer agent
   can be briefed with.
-- **`.agent/commands/`** — Claude Code convenience only: two thin slash
-  triggers (`/control-plane`, `/worker [task-slug]`) that just load the
+- **`.agent/commands/`** — Claude Code convenience only: three thin slash
+  triggers (`/control-plane`, `/worker [task-slug]`, `/shutdown` — plane-only
+  coordinated graceful shutdown) that just load the
   corresponding instruction body. Other harnesses wire their own trigger
   mechanism to the same bodies. Codex uses the root `AGENTS.md` entrypoint;
   this folder is optional cargo outside Claude Code.
@@ -182,4 +183,5 @@ docs/workflow/metrics.md                       metrics dictionary (recompute com
 .history/_bin/README.md                        fixed probes and scripts by platform
 .agent/commands/control-plane.md              /control-plane trigger (Claude Code only)
 .agent/commands/worker.md                     /worker trigger (Claude Code only)
+.agent/commands/shutdown.md                   /shutdown trigger — coordinated graceful shutdown (plane-only, Claude Code only)
 ```

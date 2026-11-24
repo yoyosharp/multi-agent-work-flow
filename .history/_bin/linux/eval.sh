@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
-# eval.sh — 34-task eval suite (v6 track D + track E + track F + track G + track H + v6.0 mapping).
+# eval.sh — 35-task eval suite (v6 track D + track E + track F + track G + track H + v6.0 mapping + v6.1 shutdown).
 #
 # The gate that shows a v6 install behaves identically on a second project
 # or machine, instead of asserting it: it copies the package to a temp
-# project, installs it fresh (init.sh), and runs 33 scripted scenarios
+# project, installs it fresh (init.sh), and runs 35 scripted scenarios
 # against the INSTALLED copy — init, selftest, scaffold, tick, anchors,
 # ratify, risk, chain, watcher, Stop hook, backstop, templates, domain
 # guard, line cap, metrics row, API index (miss/hit/stale/merge-conflict/
 # cross-machine/migration), server lifecycle (start/test/stop, forged
 # pidfile, server left running at CLOSE), board categories (kinds, chips,
 # counts), auto-refresh tag, watcher board regen, lock holder parsing
-# (malformed lock, stale takeover). No live agent sessions are involved: the
+# (malformed lock, stale takeover), shutdown (command, marker, watcher/poller
+# stop, release flow). No live agent sessions are involved: the
 # scenarios exercise the deterministic machinery (scripts + templates +
 # docs) that the agents run on. A live agent's judgement is still the
 # plane's, not the eval's.
 #
 # Usage: eval.sh [package-root]   (default: the v6 tree this script ships in)
-# Exit 0 = EVAL-PASS (53/53); nonzero = EVAL-FAIL with the failing scenarios named.
+# Exit 0 = EVAL-PASS (61/61); nonzero = EVAL-FAIL with the failing scenarios named.
 # Windows eval is pending (no PowerShell host here); linux/mac only.
 set -u
 PKG="${1:-$(cd "$(dirname "$0")/../../.." && pwd -P)}"
@@ -500,6 +501,63 @@ bash "$BIN/init.sh" >/dev/null 2>&1
   && ok "34b init re-run restores a missing skill dir and leaves adopted files alone" \
   || bad "34b init re-run did not restore the skill dir or overwrote an adopted file"
 
-echo "== EVAL: $pass passed, $fail failed (of $((pass+fail)) checks across 34 scenarios)"
+# 35: /shutdown (v6.1) — plane-only command, marker denied to workers,
+# watcher/poller stop on the marker, release flow
+[ -f .agent/commands/shutdown.md ] && [ -f .claude/commands/shutdown.md ] \
+  && grep -q 'WORKFLOW_ROLE=plane' .agent/commands/shutdown.md \
+  && ok "35 shutdown command present in the package and mapped to .claude/" \
+  || bad "35 shutdown command missing from the package or the install"
+rm -f .claude/commands/shutdown.md
+bash "$BIN/init.sh" >/dev/null 2>&1
+[ -f .claude/commands/shutdown.md ] \
+  && ok "35b init re-run restores a missing command file" \
+  || bad "35b init re-run did not restore shutdown.md"
+# hook denies a worker write to the shutdown marker (synthetic stdin;
+# reuses the eval-guard worktree from scenario 18)
+printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/.history/SHUTDOWN.md"},"cwd":"%s/.worktree/eval-guard"}' "$PROJ" "$PROJ" \
+  | WORKFLOW_ROLE=worker WORKFLOW_SLUG=eval-guard bash .claude/hooks/domain-guard.sh >/dev/null 2>&1 \
+  && bad "35c hook allowed a worker write to .history/SHUTDOWN.md" \
+  || ok "35c hook denies a worker write to the shutdown marker"
+printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/.history/SHUTDOWN.md"},"cwd":"%s"}' "$PROJ" "$PROJ" \
+  | WORKFLOW_ROLE=plane bash .claude/hooks/domain-guard.sh >/dev/null 2>&1 \
+  && ok "35d hook allows the plane to write the shutdown marker" \
+  || bad "35d hook blocked the plane's shutdown marker write"
+# watcher exits on the stop marker (test mode; reuses the evalwatch task dir)
+touch .history/._watcher_stop
+printf '.history/2026-11-11-evalwatch/worklog.md\n' | PLANE_WATCH_DEBOUNCE=1 bash "$BIN/plane-watch.sh" . --test-mode >/dev/null 2>&1
+[ $? -eq 0 ] && grep -q 'stop marker present' .history/_watcher.log \
+  && ok "35e watcher exits on the stop marker" \
+  || bad "35e watcher did not exit on the stop marker"
+# plane-poll exits on the stop marker (no tick, no scans, no watcher restart)
+rm -f .history/._watcher_state
+rm -rf .history/._poll_schedule
+(cd "$PROJ" && bash "$BIN/plane-poll.sh" --stale-now --relays-now >/dev/null 2>&1)
+[ $? -eq 0 ] && [ ! -d .history/._poll_schedule ] && [ ! -f .history/._watcher_state ] \
+  && ok "35f plane-poll exits on the stop marker (no scans, no watcher restart)" \
+  || bad "35f plane-poll did not exit cleanly on the stop marker"
+rm -f .history/._watcher_stop
+# worker release flow on the shutdown signal (fixture task dir)
+mkdir -p .history/2026-11-11-evalshutdown
+printf '2026-11-11 10:00 — worker: executing\nstate: ACTIVE impl\n' > .history/2026-11-11-evalshutdown/worklog.md
+printf '%s\n' \
+  '| # | Worker | Host:Pid | Launched-by | Phase | Method | Commitment | Write domain | Resource tokens | Claimed-at | Status | Granted-at | Notes |' \
+  '|---|---|---|---|---|---|---|---|---|---|---|---|---|' \
+  '| 1 | w1 | host:1 | plane | impl | md | c1 | src/test/** | manual-test | 2026-11-11 10:00 | EXECUTING | 2026-11-11 10:01 | |' \
+  > .history/2026-11-11-evalshutdown/workers.md
+printf 'inbox for evalshutdown\n' > .history/2026-11-11-evalshutdown/inbox.md
+printf 'SHUTDOWN — operator shutdown\nat 2026-11-11 10:30 UTC by plane host:1\n' > .history/SHUTDOWN.md
+printf 'SHUTDOWN — operator shutdown\n' >> .history/2026-11-11-evalshutdown/inbox.md
+sed -i 's/EXECUTING/RELEASED/' .history/2026-11-11-evalshutdown/workers.md
+printf '2026-11-11 10:31 — shutdown: current step committed; B3 checkpoint: impl done through Foo, tests pending, resume at Bar\n2026-11-11 10:31 session end — shutdown\n' >> .history/2026-11-11-evalshutdown/worklog.md
+! grep -qE '\| (EXECUTING|GRANTED) \|' .history/2026-11-11-evalshutdown/workers.md \
+  && ok "35g after the signal, no live claim rows remain (plane wait terminates)" \
+  || bad "35g a live claim row survived the shutdown release"
+grep -q 'session end — shutdown' .history/2026-11-11-evalshutdown/worklog.md \
+  && grep -q 'B3 checkpoint' .history/2026-11-11-evalshutdown/worklog.md \
+  && grep -q '^SHUTDOWN — ' .history/2026-11-11-evalshutdown/inbox.md \
+  && ok "35h shutdown release leaves the B3 checkpoint + session-end log + inbox row" \
+  || bad "35h shutdown release is missing checkpoint, session-end log, or inbox row"
+
+echo "== EVAL: $pass passed, $fail failed (of $((pass+fail)) checks across 35 scenarios)"
 [ "$fail" -eq 0 ] && { echo "EVAL-PASS: every scenario demonstrated"; exit 0; }
 echo "EVAL-FAIL: $fail check(s) unproven"; exit 1

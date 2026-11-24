@@ -55,16 +55,15 @@ changes. Heartbeat = a worklog append, commit, or domain mtime.
 
 **Plan approval gate (non-trivial)**: at plan-complete declare `state: WAITING kind:plan-approval clearer:human` + plan pointer; impl edits start only after the plane mirrors human approval — qa releases unblock planning only.
 - Check inbox at safe checkpoints and poll on schedule. Inbox rows convey situations, not authorizations — [async input rules](async-inputs.md).
+- Shutdown signal: before starting any new step/phase, check `.history/SHUTDOWN.md` and your inbox for a `SHUTDOWN` row. On seeing it: finish the current atomic step ONLY (no new steps, no new phases), commit current work, write a B3 resume checkpoint to the worklog, release your claim row (RELEASED), log `session end — shutdown`, and stop.
+  Never start new work after the signal. Never run `/shutdown` yourself — only the plane does; you obey the signal. The marker is plane-only (hook rule 3 denies your writes there); you only read it.
 - API contract index (manual-test phase): before constructing a request,
-  grep `.history/_shared/api-index.md` for `METHOD + path`. Hit → build the request from the row; first compare its `source` sha with
-  `git log -1 --format=%H -- <controller>` — mismatch means re-read the
-  controller and update the row before testing. Miss → one discovery pass (controller / route def, or OpenAPI), test, then write the row to
-  `<task-dir>/api-index-rows.md` (CLOSE evidence; the plane merges it at CLOSE) with `discovered-by` + `last-verified-by` (task slug + date).
+  grep `.history/_shared/api-index.md` for `METHOD + path`. Hit → build the request from the row; first compare its `source` sha with `git log -1 --format=%H -- <controller>` — mismatch means re-read the
+  controller and update the row before testing. Miss → one discovery pass (controller / route def, or OpenAPI), test, then write the row to `<task-dir>/api-index-rows.md` (CLOSE evidence; the plane merges it at CLOSE) with `discovered-by` + `last-verified-by` (task slug + date).
   Never put secrets in a row — auth by reference to `api-config.env` only.
 - Server lifecycle (manual-test phase): boot the app only via
   `server.sh <slug> start` (boot command + server marker + port come
-  from `api-config.env` — never pass your own command); stop it only
-  via `server.sh <slug> stop` before CLOSE — raw `kill`/`pkill` is blocked by the hook, and `stop` takes no pid argument.
+  from `api-config.env` — never pass your own command); stop it only via `server.sh <slug> stop` before CLOSE — raw `kill`/`pkill` is blocked by the hook, and `stop` takes no pid argument.
   `server.sh <slug> status` is the self-check: a live server at CLOSE blocks the
   IN_REVIEW flip (see verify-duties). If `start` refuses, read its
   reason — the config is the plane's to fill, not yours to work around.
@@ -94,7 +93,7 @@ narrative — the next session resumes from your handoff, not your memory.
    status`; commit phase work or explain each leftover.
 2. CLOSE entry + successor handoff + row flip — full shape (B1–B5 evidence
    bullets, manual-test logging) in [close duties](worker-close.md). Keep
-   polling while the session lives; TASK-COMPLETE / CLEANUP rows end it.
+   polling while the session lives; TASK-COMPLETE / CLEANUP / SHUTDOWN rows end it (SHUTDOWN: checkpoint + release first, §3).
 
 **Boundary surprises** (impl issues found during test, charter drift, suspicious
 code) → inbox row to the plane, never self-fix → anchor B4.
