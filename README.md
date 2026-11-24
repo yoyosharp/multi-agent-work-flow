@@ -1,4 +1,4 @@
-# Set-up v6.3.1 — anchors-based control-plane / parallel-agents workflow
+# Set-up v6.4 — anchors-based control-plane / parallel-agents workflow
 
 **Self-contained**: everything needed ships inside this folder, whatever it
 is named. Copy its contents into any project root and the workflow runs —
@@ -53,8 +53,20 @@ line-count check enforces the cap.
   closecheck, delivery, scaffold, init, api, evidence, selftest — one exact
   allowlisted invocation each (see `.history/_bin/README.md` and the
   [polling rules](docs/workflow/async-inputs.md#1-poll-for-changes));
-  `board.sh` (linux/mac) gives the human a read-only HTML dashboard of
-  `.history/` (`board.sh serve` = regenerate-on-reload). The
+  `board.sh` (linux/mac) gives the human the Board v2 UI tracker of
+  `.history/` (v6.4): an overview (pulse tiles, gates-only inbox, fleet
+  matrix of tasks × the 14 phases, live tasks with mini-steppers, plane
+  messages demoted to a collapsed Activity feed) plus one detail page
+  per task (`.history/board/<slug>.html`: goal, 14-step stepper with
+  gate nodes, delivery-prerequisites checklist, rendered docs tabs,
+  Compact/All/Raw trace). One-shot mode is read-only; `board.sh serve`
+  (localhost, regenerate-on-reload) additionally enables the gate
+  forms — Q&A answers, finding adjudications and the plan/WAIVE/
+  final-review/delivery relays. **Board writes happen ONLY on an
+  explicit Submit press** (typing is a local draft, no autosave), one
+  Submit writes the whole batch, and a Submit is fill+release in one
+  step (A-slot filled + status row → RELEASED), hash-guarded against
+  files changed since page load. The
   `closecheck anchors` gate is **active by default** in this package
   (v4 installs have it dormant). `selftest` proves the gates can fail —
   run it after any gate change and before adopting a package update. A

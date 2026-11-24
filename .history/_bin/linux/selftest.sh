@@ -98,14 +98,18 @@ printf '%s\n' '| # | Title | Status | Blocks |' '|---|---|---|---|' \
   '| Q1 | first | ANSWERED (held) | impl |' \
   '| Q2 | second | RELEASED | impl |' \
   '| Q3 | third | CONSUMED | impl |' > ".history/relay-gate-selftest/qa.md"
+# scope fixture greps to the fixture's own sweep section: the sweep scans
+# every real .history/*/ dir, and a real task's rows can collide with the
+# fixture's labels (live find 2026-11-23: a held finding titled "qa Q3...")
+fsec() { awk '/^== relay-gate-selftest\/$/{p=1; next} /^== /{p=0} p'; }
 sweep=$(bash "$bin/relays.sh")
-printf '%s' "$sweep" | grep -q 'held—surface at next reply\] qa Q1' \
+printf '%s' "$sweep" | fsec | grep -q 'held—surface at next reply\] qa Q1' \
   && ok "sweep tags ANSWERED row as held (surface at next reply)" \
   || bad "sweep never tagged an ANSWERED row held — held/release split unproven"
-printf '%s' "$sweep" | grep -q 'released—awaiting worker\] qa Q2' \
+printf '%s' "$sweep" | fsec | grep -q 'released—awaiting worker\] qa Q2' \
   && ok "sweep tags RELEASED row as awaiting worker" \
   || bad "sweep never tagged a RELEASED row — release path unproven"
-printf '%s' "$sweep" | grep -q 'qa Q3' \
+printf '%s' "$sweep" | fsec | grep -q 'qa Q3' \
   && bad "sweep surfaced a CONSUMED row — false positive" \
   || ok "sweep leaves CONSUMED rows alone"
 
@@ -116,12 +120,12 @@ printf '%s\n' '| # | Finding | Severity | Status |' '|---|---|---|---|' \
   '### F1' '### Pass complete — F1' '### F2' '### Pass complete — F1..F2' \
   > ".history/relay-gate-selftest/review.md"
 sweep=$(bash "$bin/relays.sh")
-printf '%s' "$sweep" | grep -q 'OPEN PASS' \
+printf '%s' "$sweep" | fsec | grep -q 'OPEN PASS' \
   && bad "sweep reported an open pass on a fully closed multi-pass report" \
   || ok "sweep resets the open-pass count at each Pass complete marker"
 printf '%s\n' '### F3' >> ".history/relay-gate-selftest/review.md"
 sweep=$(bash "$bin/relays.sh")
-printf '%s' "$sweep" | grep -q 'OPEN PASS — 1 finding' \
+printf '%s' "$sweep" | fsec | grep -q 'OPEN PASS — 1 finding' \
   && ok "sweep still flags a finding after the last Pass complete marker" \
   || bad "sweep missed an open finding after the last marker"
 
@@ -333,9 +337,10 @@ echo "== boot.sh / shutdown.sh / compaction settings (v6.3.1)"
 [ -f "$bin/boot.sh" ] && [ -f "$bin/shutdown.sh" ] \
   && ok "boot.sh and shutdown.sh present" || bad "boot.sh or shutdown.sh missing"
 ! grep -q "autoCompactEnabled" "$AGENT_DIR/settings.json" \
-  && grep -q '"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "150000"' "$AGENT_DIR/settings.json" \
-  && ok "settings.json sets the auto-compact window (150000) and leaves auto-compact enabled" \
-  || bad "settings.json lost the compaction settings"
+  && ! grep -q "CLAUDE_CODE_AUTO_COMPACT_WINDOW" "$AGENT_DIR/settings.json" \
+  && ! grep -q '"env"' "$AGENT_DIR/settings.json" \
+  && ok "settings.json carries no auto-compact env (per-agent only since v6.4) and never disables auto-compact" \
+  || bad "settings.json regained a package-level auto-compact setting"
 grep -q "boot.sh" docs/workflow/control-plane-instructions.md \
   && grep -q "shutdown.sh" "$AGENT_DIR/commands/shutdown.md" \
   && ! grep -q "SHUTDOWN_WAIT_SECS" docs/workflow/control-plane-pm.md "$AGENT_DIR/commands/shutdown.md" \
@@ -1183,6 +1188,71 @@ grep -q 'boardScroll' "$bhtml" \
 grep -q "filterMsgs('all'" "$bhtml" \
   && ok "chip toggle JS present" \
   || bad "chip toggle JS missing"
+
+echo "== board v2: overview, task page, gate forms (v6.4)"
+vroot="$work/board2-root"
+mkdir -p "$vroot/.history/2026-11-21-demo" "$vroot/.history/_bin"
+cp -r .history/_bin/linux "$vroot/.history/_bin/linux"
+printf '%s\n' '# TASK_LIST' '### 2026-11-21-demo — IN_PROGRESS' \
+  '- **Base branch**: `main` (tip abc) · **Agent branch**: `claude/main/demo`' \
+  '- **Worktree**: `.worktree/demo` · **Started**: 2026-11-21 09:00 · **Completed**: —' \
+  '- **Commits**: — (in progress)' > "$vroot/.history/TASK_LIST.md"
+printf '%s\n' '# brief' '- **Risk**: `low / none / fixture`' '- **Goal**: Demonstrate board v2 in a fixture.' '- **Manual-test**: scheduled' > "$vroot/.history/2026-11-21-demo/brief.md"
+printf '%s\n' \
+  '| # | Worker | Host:Pid | Launched-by | Phase | Method | Commitment | Write domain | Resource tokens | Claimed-at | Status | Risk | Granted-at | Notes |' \
+  '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|' \
+  '| 1 | w1 | h:1 | human | plan | md | c | src/** | none | 2026-11-21 09:00 | RELEASED | low | 2026-11-21 09:01 | |' \
+  '| 2 | w1 | h:1 | human | impl | md | c | src/** | none | 2026-11-21 09:30 | EXECUTING | low | 2026-11-21 09:31 | |' \
+  > "$vroot/.history/2026-11-21-demo/workers.md"
+printf '%s\n' '# worklog — demo' '- 2026-11-21 09:00 — plane (charter) kind:status chartered demo' '- 2026-11-21 09:35 — worker: implementing' 'state: ACTIVE impl' > "$vroot/.history/2026-11-21-demo/worklog.md"
+printf '%s\n' '# Q&A — demo' '| # | Title | Status | Blocks |' '|---|-------|--------|--------|' '| Q1 | Which flavour? | OPEN | impl |' '' '---' \
+  '### Q1 — Which flavour?' '- Asked: 2026-11-21 09:40 (worker) · Source: brief · Blocks: impl' \
+  '- Context: two flavours possible; assumed vanilla meanwhile' '- **An:** *(human fills)*' '- **Ack:** —' \
+  > "$vroot/.history/2026-11-21-demo/qa.md"
+printf '%s\n' '# Review — demo' '| # | File:Line | Severity | Summary | Status |' '|---|-----------|----------|---------|--------|' '| F1 | src/A.java:10 | MAJOR | Null check missing | RAISED |' '' '---' \
+  '### F1 — Null check missing' '- **Location**: `src/A.java:10`' '- **Context**: entry point' '- **Impact**: NPE' '- **Suggested direction**: add a guard' \
+  '- **Adjudication A-slot**: *(human fills: FIX / DROP / DEFER)*' '- **Ack**: —' '' '### Pass complete — F1..F1' \
+  > "$vroot/.history/2026-11-21-demo/review.md"
+printf '%s\n' '# inbox — demo' '| Time | From | To | Phase | Message |' '|------|------|-----|-------|---------|' > "$vroot/.history/2026-11-21-demo/inbox.md"
+(cd "$vroot" && bash .history/_bin/linux/board.sh >/dev/null 2>&1)
+vhtml="$vroot/.history/board.html"; vpage="$vroot/.history/board/demo.html"
+grep -q 'Gates inbox' "$vhtml" && grep -q 'panel matrix' "$vhtml" && grep -q '/14' "$vhtml" \
+  && ok "board v2 overview: gates inbox + fleet matrix + mini-stepper" || bad "board v2 overview missing gates/matrix/mini-stepper"
+grep -q 'Q Q1' "$vhtml" && grep -q 'F F1' "$vhtml" \
+  && ok "board v2 gates strip lists the open Q1 and F1" || bad "board v2 gates strip missing Q1/F1"
+[ -f "$vpage" ] && grep -q 'stepper' "$vpage" && grep -q 'Delivery prerequisites' "$vpage" \
+  && grep -q 'doc-qa' "$vpage" && grep -q 'md-renderer begin' "$vpage" && grep -q 'trace-compact' "$vpage" \
+  && grep -q 'Demonstrate board v2' "$vpage" \
+  && ok "board v2 task page: stepper, prerequisites, docs tabs, md renderer, trace" || bad "board v2 task page incomplete"
+printf '%s\n' '<html>stale</html>' > "$vroot/.history/board/ghost-task.html"
+(cd "$vroot" && bash .history/_bin/linux/board.sh >/dev/null 2>&1)
+[ ! -f "$vroot/.history/board/ghost-task.html" ] && [ -f "$vpage" ] \
+  && ok "board prunes stale task pages (no orphan page for a gone task dir)" || bad "board left a stale task page behind"
+grep -q '<form' "$vpage" && bad "static board page must not render gate forms" || ok "static board page renders gates read-only (no forms)"
+# serve-mode end-to-end: real HTTP round-trip on a throwaway port
+vport=$(( 18100 + (RANDOM % 500) ))
+vlog="$PWD/$work/board2-serve.log"
+(cd "$vroot" && bash .history/_bin/linux/board.sh serve "$vport" >"$vlog" 2>&1) & srv=$!
+for i in $(seq 1 50); do curl -s -o /dev/null "http://127.0.0.1:$vport/" && break; sleep 0.2; done
+curl -s "http://127.0.0.1:$vport/task/demo" > "$work/board2-task.html"
+grep -q 'name="q_Q1"' "$work/board2-task.html" && grep -q 'Submit &amp; release (writes to qa.md)' "$work/board2-task.html" \
+  && ok "serve mode renders the Q form with an explicit Submit" || bad "serve mode task page missing the Q form"
+vhash=$(grep -o 'name="hash" value="[a-f0-9]*"' "$work/board2-task.html" | head -1 | sed 's/.*value="//; s/"$//')
+cp "$vroot/.history/2026-11-21-demo/qa.md" "$work/qa-before.md"
+vcode=$(curl -s -o /dev/null -w '%{http_code}' -X POST --data-urlencode "task=2026-11-21-demo" --data-urlencode "file=qa.md" --data-urlencode "hash=$vhash" --data-urlencode "q_Q1=Vanilla, always" "http://127.0.0.1:$vport/fill")
+[ "$vcode" = 303 ] && grep -q '^\- \*\*An:\*\* Vanilla, always' "$vroot/.history/2026-11-21-demo/qa.md" \
+  && grep -q '| Q1 | Which flavour? | RELEASED |' "$vroot/.history/2026-11-21-demo/qa.md" \
+  && grep -q 'human (board) kind:decision submitted Q1 (fill+release via board)' "$vroot/.history/2026-11-21-demo/worklog.md" \
+  && ok "POST /fill: A-slot filled, status RELEASED, worklog trace line appended" || bad "POST /fill did not fill+release Q1 (http $vcode)"
+diff <(grep -v 'An:\*\*\|Q1 | Which' "$work/qa-before.md") <(grep -v 'An:\*\*\|Q1 | Which' "$vroot/.history/2026-11-21-demo/qa.md") >/dev/null \
+  && ok "POST /fill left the rest of qa.md byte-identical" || bad "POST /fill changed lines outside the A-slot/status row"
+vcode=$(curl -s -o /dev/null -w '%{http_code}' -X POST --data-urlencode "task=2026-11-21-demo" --data-urlencode "file=review.md" --data-urlencode "hash=deadbeef" --data-urlencode "f_F1=FIX" "http://127.0.0.1:$vport/fill")
+[ "$vcode" = 409 ] && grep -q 'human fills: FIX / DROP / DEFER' "$vroot/.history/2026-11-21-demo/review.md" \
+  && ok "POST /fill with a stale hash → 409 and the file is unchanged" || bad "stale-hash POST was not refused (http $vcode)"
+vcode=$(curl -s -o /dev/null -w '%{http_code}' -X POST --data-urlencode "task=2026-11-21-demo" --data-urlencode "relay=waive" --data-urlencode "note=fixture reason" "http://127.0.0.1:$vport/relay")
+[ "$vcode" = 303 ] && grep -q '| human | plane | manual-test | WAIVE demo — fixture reason |' "$vroot/.history/2026-11-21-demo/inbox.md" \
+  && ok "POST /relay waive appends the canonical WAIVE inbox row" || bad "POST /relay waive failed (http $vcode)"
+for c in $(pgrep -P "$srv" 2>/dev/null); do for g in $(pgrep -P "$c" 2>/dev/null); do kill "$g" 2>/dev/null; done; kill "$c" 2>/dev/null; done; kill "$srv" 2>/dev/null
 
 echo "== plane lock holder parsing (v6 track H)"
 # fixture: lock-root is its own project root (lock.sh cds from its own path).

@@ -885,3 +885,97 @@ the exact image name `^claude(\.exe)?$`, not a substring.
 - Windows: boot.sh/shutdown.sh are bash-only (Windows has no watcher or
   tmux); the settings.json window applies there too. Windows selftest
   assertions updated statically, not executed.
+
+## v6.4 — Board v2 (2026-11-21)
+
+The board becomes the human's primary UI tracker (the plane console in
+tmux stays as transport/log, not the surface to monitor). Design:
+`v6-board-v2-design-draft.md`; research on similar dashboards
+(LangGraph Agent Inbox, Linear, Temporal, GitLab, GitHub PR, Airflow,
+Prefect, Humanloop) in the 2026-11-21 research notes. Key research
+finding: the flow is a linear 14-step pipeline with 4 human gates, not
+a DAG — so a stepper, not a graph library.
+
+- **S1 Overview v2**: pulse tiles promoted to the top; "Awaiting you"
+  becomes a gates-only inbox (open Qn A-slots, open Fn adjudications
+  from completed passes, BLOCKED clearer:human, plan-approval when the
+  plan claim is RELEASED with no impl claim, IN_REVIEW → final review,
+  DONE → delivery; blocked first, then oldest task); fleet matrix
+  (tasks × 14 phases, coloured cells linking to the task page anchor);
+  mini-stepper + n/14 on every live-task row; filter chips
+  (All / Waiting on me / Running / Blocked / Done); plane messages
+  demoted into a collapsed Activity `<details>` (kind: chips unchanged).
+- **S2 Task detail pages**: `.history/board/<short-slug>.html` per live
+  task — goal/risk/branches from brief + TASK_LIST, 14-node stepper
+  (gate nodes double-bordered, waived manual-test grey), sidebar state
+  (current phase, last claim, worktree), delivery-prerequisites
+  checklist (manual-test verdict or WAIVE on file; findings all
+  RESOLVED/DROPPED; ANCHOR-PASS in worklog; TASK_LIST commits listed;
+  status DONE/DELIVERED — all derived per generation, never stored),
+  docs tabs (brief/plan/qa/review/evidence/manual-testing/worklog/
+  inbox) rendered in-page, and a Compact/All/Raw trace (Compact =
+  state lines + plane messages + gate/verdict keywords + one line per
+  claim row, consecutive same-prefix lines collapsed with a ×n count).
+  Phase derivation is a documented heuristic over TASK_LIST status,
+  claim rows, review pass markers, waive markers and qa slots — it
+  never fails on missing files.
+- **Markdown renderer**: a small self-contained JS renderer inlined in
+  every generated page (headings, bold/italic, inline code, code
+  blocks, lists, tables, links, blockquotes, hr), kept as ONE
+  clearly-delimited `md-renderer` block so it can be swapped later.
+  No external fetch, no build step. A source toggle shows the raw text.
+- **S3 Gate forms (serve mode only)**: POST /fill writes Qn answers /
+  Fn adjudications (FIX/DROP/DEFER + optional note) for a whole task
+  in ONE Submit. **User rulings (2026-11-21):** writes happen ONLY on
+  an explicit Submit press — typing/selecting is a local draft, no
+  autosave, no write on render or field change; and a Submit is
+  **fill+release in one step** (A-slot filled AND the status-table row
+  flips to RELEASED), mirroring the verbal fill+release path. The
+  write is guarded by the sha256 of the file as rendered (stale →
+  409, no write), validated for all items before any write (missing
+  block/slot → 422, no partial batch), applied atomically (temp +
+  rename), and traced with one worklog line per submit. After a
+  submit the task page banner names the next open gate across tasks,
+  or "Inbox zero". Static mode renders the same sections read-only.
+- **S4 Gate relays (serve mode only)**: four small explicit-button
+  forms POST /relay → one canonical inbox row each: PLAN-APPROVED,
+  WAIVE (reason required, 422 when empty), FINAL-REVIEW-CONFIRMED
+  (… — solved), DELIVERY-APPROVED; each also traced in the worklog.
+- **S5 Console diet (docs only)**: async-inputs §1 — on a watcher wake
+  the plane's visible reply is ONE summary line (tasks changed +
+  gates waiting), detail goes to worklog/board; §2/§3 — A-slot fills
+  (board submits included) are consumed batched via the relays sweep,
+  one surfacing per sweep; control-plane-instructions — sub-agent
+  returns are reported in console as verdict + finding count only.
+- **Watcher integration**: `.history/board/` added to plane-watch's
+  EXCLUDE (linux+mac) alongside board.html; tick never gathered
+  board/ (it snapshots only named task files), so no tick change.
+- **settings.json**: the `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` block
+  shipped in v6.3.1 is REMOVED — the user sets the auto-compact window
+  per-agent only (his ruling); the hooks block is unchanged and
+  `autoCompactEnabled` stays absent (auto-compact on, fires naturally).
+- **Deliberately NOT built** (research §7 — needs a backend/DB/
+  framework): live/WebSocket streams, pan/zoom DAG rendering,
+  time-travel/fork, re-execute-from-step, full-text search,
+  token/cost telemetry, line-level diff comments. Reload-on-GET and
+  the 180 s meta refresh are enough at single-human scale.
+- Windows: no board.ps1 exists; Windows selftest's settings assertion
+  updated statically (not executed). Linux/mac board.sh identical.
+
+### v6.4 patch (2026-11-23) — two live finds from the live migration
+
+- **Selftest relays fixture is now hermetic.** The fixture's five greps
+  ran over the WHOLE relays sweep, but the sweep scans every real
+  `.history/*/` dir — a real held finding titled "qa Q3…" made the
+  CONSUMED-row gate false-positive on that repo. All five greps now
+  pipe through `fsec()` (awk section extractor for the fixture's own
+  `== relay-gate-selftest/` section) in linux+mac selftest.sh; windows
+  selftest.ps1 uses the equivalent `Get-FixtureSection`. Same rule for
+  any future fixture gate: scope to your own section.
+- **board.sh prunes stale task pages.** Generation now deletes
+  `.history/board/*.html` whose task dir no longer exists (a transient
+  fixture dir left `relay-gate-selftest.html` behind live). The prune
+  always returns 0 — plane-watch's `regen_board` treats board.sh's
+  exit code as regen success, and a kept page must not leak a false
+  status (first cut of the prune did exactly that and failed the
+  watcher-regen gate; the if-form + explicit `return 0` is the fix).

@@ -41,6 +41,8 @@ campaign — never stop to ask. Append observations to worklogs; never
 edit above your own last entry. Plane message lines (`— plane (verb) …`) carry
 `kind:<question|decision|blocker|status|handoff>` so the board can filter them; no marker → uncategorized, never dropped.
 
+**Sub-agent reports stay terse in console** — plan-review, pre-test-review (§3.1) and test-result-review returns are reported as verdict + finding count only; the full report lives in the task artifacts and the board trace (collapsed under its phase), never narrated in the plane console. The board (v6.4) is the human's primary surface: gates, stepper, docs and trace live there, and a board Submit is fill+release in one step (A-slot filled + status → RELEASED by the board itself).
+
 **Held answers release through conversation, not commands** — surface filled
 qa.md/review.md A-slots at the human's next REPL interaction; any natural
 reply releases them ("still editing" keeps the hold); a verbal adjudication

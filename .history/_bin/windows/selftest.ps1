@@ -103,7 +103,19 @@ if (Test-Path $rg) { Remove-Item -Recurse -Force $rg }
 New-Item -ItemType Directory -Path $rg | Out-Null
 Set-Content -Path (Join-Path $rg 'workers.md') -Value "| # | x |`n|---|---|`n| 1 | w |"
 Set-Content -Path (Join-Path $rg 'qa.md') -Value "| # | Title | Status | Blocks |`n|---|---|---|---|`n| Q1 | first | ANSWERED (held) | impl |`n| Q2 | second | RELEASED | impl |`n| Q3 | third | CONSUMED | impl |"
-$sweep = & powershell -File (Join-Path $bin 'relays.ps1') | Out-String
+# scope fixture matches to the fixture's own sweep section: the sweep scans
+# every real .history\<dir>, and a real task's rows can collide with the
+# fixture's labels (live find 2026-11-23: a held finding titled "qa Q3...")
+function Get-FixtureSection([string]$text) {
+  $inside = $false; $out = @()
+  foreach ($line in ($text -split "`r?`n")) {
+    if ($line -match '^== relay-gate-selftest\s*$') { $inside = $true; continue }
+    if ($line -match '^== ') { $inside = $false }
+    if ($inside) { $out += $line }
+  }
+  return ($out -join "`n")
+}
+$sweep = Get-FixtureSection (& powershell -File (Join-Path $bin 'relays.ps1') | Out-String)
 if ($sweep -match 'held—surface at next reply\] qa Q1') { "  ok: sweep tags ANSWERED row as held (surface at next reply)" }
 else { "  SELFTEST-FAIL: sweep never tagged an ANSWERED row held — held/release split unproven"; $fail = 1 }
 if ($sweep -match 'released—awaiting worker\] qa Q2') { "  ok: sweep tags RELEASED row as awaiting worker" }
@@ -113,11 +125,11 @@ else { "  ok: sweep leaves CONSUMED rows alone" }
 
 # multi-pass review: findings closed by a LATER marker must not count as open
 Set-Content -Path (Join-Path $rg 'review.md') -Value "| # | Finding | Severity | Status |`n|---|---|---|---|`n| F1 | first | MINOR | RESOLVED |`n| F2 | second | MINOR | RESOLVED |`n### F1`n### Pass complete — F1`n### F2`n### Pass complete — F1..F2"
-$sweep = & powershell -File (Join-Path $bin 'relays.ps1') | Out-String
+$sweep = Get-FixtureSection (& powershell -File (Join-Path $bin 'relays.ps1') | Out-String)
 if ($sweep -match 'OPEN PASS') { "  SELFTEST-FAIL: sweep reported an open pass on a fully closed multi-pass report"; $fail = 1 }
 else { "  ok: sweep resets the open-pass count at each Pass complete marker" }
 Add-Content -Path (Join-Path $rg 'review.md') -Value "### F3"
-$sweep = & powershell -File (Join-Path $bin 'relays.ps1') | Out-String
+$sweep = Get-FixtureSection (& powershell -File (Join-Path $bin 'relays.ps1') | Out-String)
 if ($sweep -match 'OPEN PASS — 1 finding') { "  ok: sweep still flags a finding after the last Pass complete marker" }
 else { "  SELFTEST-FAIL: sweep missed an open finding after the last marker"; $fail = 1 }
 
@@ -278,8 +290,8 @@ else { "  SELFTEST-FAIL: hook missing the registry read / override / carve-out";
 if ((Select-String -Path '.history\_bin\windows\init.ps1' -Pattern '_sessions' -Quiet) -and (Select-String -Path '.history\_bin\windows\init.ps1' -Pattern 'declare-role.ps1' -Quiet)) { "  ok: init.ps1 creates .history/_sessions/ and requires declare-role.ps1" }
 else { "  SELFTEST-FAIL: init.ps1 missing the _sessions dir or the declare-role floor check"; $fail = 1 }
 if ((Select-String -Path (Join-Path $AgentDir 'commands\shutdown.md') -Pattern 'shutdown.sh' -Quiet)) { "  ok: shutdown command relies on the declared plane role (no env var)" }
-if ((Select-String -Path (Join-Path $AgentDir 'settings.json') -Pattern 'CLAUDE_CODE_AUTO_COMPACT_WINDOW' -Quiet) -and -not (Select-String -Path (Join-Path $AgentDir 'settings.json') -Pattern 'autoCompactEnabled' -Quiet)) { "  ok: settings.json sets the auto-compact window (150000) and leaves auto-compact enabled" }
-else { "  SELFTEST-FAIL: settings.json lost the auto-compact window or disables auto-compact"; $fail = 1 }
+if (-not (Select-String -Path (Join-Path $AgentDir 'settings.json') -Pattern 'CLAUDE_CODE_AUTO_COMPACT_WINDOW' -Quiet) -and -not (Select-String -Path (Join-Path $AgentDir 'settings.json') -Pattern 'autoCompactEnabled' -Quiet)) { "  ok: settings.json carries no auto-compact env (per-agent only since v6.4)" }
+else { "  SELFTEST-FAIL: settings.json regained a package-level auto-compact setting"; $fail = 1 }
 
 else { "  SELFTEST-FAIL: shutdown.md lost the declared-role check"; $fail = 1 }
 Remove-Item -Recurse -Force $work

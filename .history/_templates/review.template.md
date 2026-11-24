@@ -1,7 +1,7 @@
 # Pre-Test Review Gate Report — <YYYY-MM-DD>-<slug>
 
 Findings numbered monotonically (F1, F2, …). Reviewer appends findings.
-Human fills **Adjudication A-slots** (FIX / DROP / DEFER); a fill is **ADJUDICATED (held, editable)** — the plane surfaces it at the human's next REPL interaction and releases on any natural confirm, or records a verbal adjudication as fill+release in one step; no `release` command exists.
+Human fills **Adjudication A-slots** (FIX / DROP / DEFER); a fill is **ADJUDICATED (held, editable)** — the plane surfaces it at the human's next REPL interaction and releases on any natural confirm, or records a verbal adjudication as fill+release in one step; no `release` command exists. A board Submit (board.sh serve, v6.4) is likewise fill+release in one step: it fills the A-slot and flips this table's Status to RELEASED itself, only when the human presses Submit.
 Control plane tracks the status table — RAISED / ADJUDICATED (held) / RELEASED (released via conversation) / RESOLVED / DROPPED (DROP-direction releases mirror straight to DROPPED).
 
 **Pass completion marker (binding)**: the reviewer appends findings incrementally — a pass is **open** until the reviewer's last entry of the pass:

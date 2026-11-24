@@ -17,6 +17,9 @@
 # board.html (board.sh one-shot), so the file stays fresh without serve
 # mode; board.html is watch-excluded and outside tick's diff, so the
 # regen cannot self-trigger. Regen failures are logged, never fatal.
+# v6.4: board.sh also writes per-task pages under .history/board/ —
+# the board/ path is in the watch EXCLUDE for the same reason (tick
+# never gathers .history/board/: it snapshots only named task files).
 #
 # Usage: plane-watch.sh [project-root] [--test-mode]
 #   --test-mode: read event lines (one path per line) from stdin instead
@@ -72,7 +75,7 @@ AGENT_CMD="${PLANE_AGENT_CMD:-claude}"
 STATE="$ROOT/.history/._watcher_state"
 LOG="$ROOT/.history/_watcher.log"
 INBOX_SNAP="$ROOT/.history/._watcher_inbox"
-EXCLUDE='(_tick_snapshots|_poll_schedule|board\.html|_plane_pane|_worker_panes|_watcher_state|_watcher\.log|_watcher_inbox|_selftest)'
+EXCLUDE='(_tick_snapshots|_poll_schedule|board\.html|board/|_plane_pane|_worker_panes|_watcher_state|_watcher\.log|_watcher_inbox|_selftest)'
 
 [ -d "$ROOT/.history" ] || { echo "plane-watch: no .history/ under $ROOT (run init first)" >&2; exit 1; }
 
@@ -170,8 +173,8 @@ check_worker_wakes() { # check_worker_wakes — Phase 2: inbox change + waiting 
   done
 }
 
-regen_board() { # regen_board — keep the static board.html fresh (track G)
-  # board.html is watch-excluded and outside tick's diff, so this write
+regen_board() { # regen_board — keep the static board fresh (track G; v6.4: + task pages)
+  # board.html and board/ are watch-excluded and outside tick's diff, so this write
   # cannot self-trigger a new cycle. Never fails the cycle: log and continue.
   if bash "$BIN/board.sh" >/dev/null 2>&1; then
     log "board regenerated"

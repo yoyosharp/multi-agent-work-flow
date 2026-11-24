@@ -3,7 +3,7 @@
 #
 # The gate that shows a v6 install behaves identically on a second project
 # or machine, instead of asserting it: it copies the package to a temp
-# project, installs it fresh (init.sh), and runs 39 scripted scenarios
+# project, installs it fresh (init.sh), and runs 40 scripted scenarios
 # against the INSTALLED copy — init, selftest, scaffold, tick, anchors,
 # ratify, risk, chain, watcher, Stop hook, backstop, templates, domain
 # guard, line cap, metrics row, API index (miss/hit/stale/merge-conflict/
@@ -18,7 +18,7 @@
 # plane's, not the eval's.
 #
 # Usage: eval.sh [package-root]   (default: the v6 tree this script ships in)
-# Exit 0 = EVAL-PASS (78/78); nonzero = EVAL-FAIL with the failing scenarios named.
+# Exit 0 = EVAL-PASS (79/79); nonzero = EVAL-FAIL with the failing scenarios named.
 # Windows eval is pending (no PowerShell host here); linux/mac only.
 set -u
 PKG="${1:-$(cd "$(dirname "$0")/../../.." && pwd -P)}"
@@ -664,6 +664,28 @@ printf 'role=worker\nslug=evalreg\n' > ".history/_sessions/$deadpid"
 for _c in $(pgrep -P "$regpid" 2>/dev/null); do kill "$_c" 2>/dev/null; done
 kill "$regpid" 2>/dev/null
 
-echo "== EVAL: $pass passed, $fail failed (of $((pass+fail)) checks across 39 scenarios)"
+# 40: board v2 (v6.4) — overview gates/matrix + per-task detail page
+printf '### 2026-11-21-evalboard2 — IN_PROGRESS\n- **Commits**: — (in progress)\n' >> .history/TASK_LIST.md
+mkdir -p .history/2026-11-21-evalboard2
+printf '%s\n' '- **Goal**: Eval board v2 goal.' '- **Manual-test**: scheduled' > .history/2026-11-21-evalboard2/brief.md
+printf '%s\n' \
+  '| # | Worker | Phase | Status |' '|---|---|---|---|' \
+  '| 1 | w1 | impl | EXECUTING |' > .history/2026-11-21-evalboard2/workers.md
+printf '%s\n' '# Q&A' '| # | Title | Status | Blocks |' '|---|-------|--------|--------|' '| Q1 | Eval question? | OPEN | impl |' '' \
+  '### Q1 — Eval question?' '- Context: eval fixture' '- **An:** *(human fills)*' '- **Ack:** —' > .history/2026-11-21-evalboard2/qa.md
+printf '%s\n' '- 2026-11-21 10:00 — plane (charter) kind:status chartered evalboard2' > .history/2026-11-21-evalboard2/worklog.md
+bash "$BIN/board.sh" >/dev/null 2>&1
+[ -f .history/board/evalboard2.html ] \
+  && grep -q 'Gates inbox' .history/board.html \
+  && grep -q 'panel matrix' .history/board.html \
+  && grep -q 'Q Q1' .history/board.html \
+  && grep -q 'stepper' .history/board/evalboard2.html \
+  && grep -q 'Delivery prerequisites' .history/board/evalboard2.html \
+  && grep -q 'md-renderer begin' .history/board/evalboard2.html \
+  && grep -q 'Eval board v2 goal' .history/board/evalboard2.html \
+  && ok "40 board v2: gates inbox + fleet matrix + task page (stepper, prerequisites, md renderer, goal)" \
+  || bad "40 board v2 markers missing"
+
+echo "== EVAL: $pass passed, $fail failed (of $((pass+fail)) checks across 40 scenarios)"
 [ "$fail" -eq 0 ] && { echo "EVAL-PASS: every scenario demonstrated"; exit 0; }
 echo "EVAL-FAIL: $fail check(s) unproven"; exit 1
