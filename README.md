@@ -1,4 +1,4 @@
-# Set-up v6.0 — anchors-based control-plane / parallel-agents workflow
+# Set-up v6.2 — anchors-based control-plane / parallel-agents workflow
 
 **Self-contained**: everything needed ships inside this folder, whatever it
 is named. Copy its contents into any project root and the workflow runs —
@@ -61,8 +61,13 @@ line-count check enforces the cap.
   PreToolUse hook (`.agent/hooks/domain-guard.sh`, wired in
   `.agent/settings.json`) enforces the write-domain boundary before the
   call — workers write only under their own worktree + task dir, the plane
-  only under `.history/`, secrets and destructive shell blocked for every
-  role (see `control-plane-pm.md` §2, "PreToolUse hook").
+  only under `.history/`, the scoper only under `.history/_pending/`,
+  the helper only its allowlist (`.history/_bin/`, `0.scratch/`, memory
+  files, `*.local.json`); secrets and destructive shell blocked for every
+  role (see `control-plane-pm.md` §2, "PreToolUse hook"). The hook reads
+  the role from `WORKFLOW_ROLE` (env var is the only signal for scoper /
+  helper — both run in the project root, where cwd would derive plane);
+  the unclaimed=plane default is unchanged.
 - **`.agent/skills/pre-test-review/`** — the pre-test review-agent skill:
   call. It is Claude-specific; Codex uses `AGENTS.md` guidance and active
   workspace permissions. This package has no native Codex domain/process
@@ -73,10 +78,11 @@ line-count check enforces the cap.
   protocol. Replace `<PROJECT_REVIEW_CHECKLIST>` on adoption.
   Harness-agnostic: the body is plain instruction text any reviewer agent
   can be briefed with.
-- **`.agent/commands/`** — Claude Code convenience only: three thin slash
+- **`.agent/commands/`** — Claude Code convenience only: five thin slash
   triggers (`/control-plane`, `/worker [task-slug]`, `/shutdown` — plane-only
-  coordinated graceful shutdown) that just load the
-  corresponding instruction body. Other harnesses wire their own trigger
+  coordinated graceful shutdown, `/grill <rough idea>` — Scoper, user-invoked
+  only, `/helper [what to fix]` — helper role, user-invoked only) that just load the
+  corresponding instruction body or skill. Other harnesses wire their own trigger
   mechanism to the same bodies. Codex uses the root `AGENTS.md` entrypoint;
   this folder is optional cargo outside Claude Code.
 
@@ -138,7 +144,16 @@ line-count check enforces the cap.
    still runs at `HOT_RATE` (3 min) and ladders down automatically — see
    `_bin/README.md`); sessions re-register their wakes on `POLL-RATE`
    transitions. `plane-poll` runs stale and relay scans on their own intervals; without a scheduler, checks require
-   manual session resumes.
+   manual session resumes. Run the plane session itself inside tmux
+   (`tmux new -s plane`, run the agent, `Ctrl-b d` to detach,
+   `tmux attach -t plane` to reattach) — the event-driven wake needs a
+   tmux pane to type into. Keep the session behaving like a normal
+   terminal: in `~/.tmux.conf`, set `set -g mouse on` (the wheel then
+   scrolls scrollback instead of reaching the agent as input) and
+   `set -g history-limit 50000` (the 2000-line default loses a long
+   session's history fast), then `tmux source-file ~/.tmux.conf`.
+   Without mouse mode the wheel and arrow keys reach the agent and
+   surface as `unknown command`.
    On Windows, also run `powershell -NoProfile -ExecutionPolicy Bypass
    -File .\run-server-matrix.ps1`; it exercises the PowerShell server
    lifecycle without WSL, Python, curl, tmux, or Bash. Results and the
@@ -184,4 +199,8 @@ docs/workflow/metrics.md                       metrics dictionary (recompute com
 .agent/commands/control-plane.md              /control-plane trigger (Claude Code only)
 .agent/commands/worker.md                     /worker trigger (Claude Code only)
 .agent/commands/shutdown.md                   /shutdown trigger — coordinated graceful shutdown (plane-only, Claude Code only)
+.agent/commands/grill.md                      /grill trigger — Scoper, §0 pre-intake (user-invoked only, Claude Code only)
+.agent/commands/helper.md                     /helper trigger — helper role (user-invoked only, Claude Code only)
+.agent/skills/requirements-grill/SKILL.md     requirements-grill skill — the grilling interview (adapted from Matt Pocock's grill-me/grilling, MIT)
+.history/_templates/intake.template.md        intake doc seed (Scoper output, read by the plane at §1)
 ```

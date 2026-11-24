@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# eval.sh — 35-task eval suite (v6 track D + track E + track F + track G + track H + v6.0 mapping + v6.1 shutdown).
+# eval.sh — 37-task eval suite (v6 track D + track E + track F + track G + track H + v6.0 mapping + v6.1 shutdown + v6.2 scoper/helper).
 #
 # The gate that shows a v6 install behaves identically on a second project
 # or machine, instead of asserting it: it copies the package to a temp
-# project, installs it fresh (init.sh), and runs 35 scripted scenarios
+# project, installs it fresh (init.sh), and runs 37 scripted scenarios
 # against the INSTALLED copy — init, selftest, scaffold, tick, anchors,
 # ratify, risk, chain, watcher, Stop hook, backstop, templates, domain
 # guard, line cap, metrics row, API index (miss/hit/stale/merge-conflict/
@@ -11,13 +11,14 @@
 # pidfile, server left running at CLOSE), board categories (kinds, chips,
 # counts), auto-refresh tag, watcher board regen, lock holder parsing
 # (malformed lock, stale takeover), shutdown (command, marker, watcher/poller
-# stop, release flow). No live agent sessions are involved: the
+# stop, release flow), scoper (skill, commands, template, §0 pointers, hook domain), helper
+# (allowlist/denylist). No live agent sessions are involved: the
 # scenarios exercise the deterministic machinery (scripts + templates +
 # docs) that the agents run on. A live agent's judgement is still the
 # plane's, not the eval's.
 #
 # Usage: eval.sh [package-root]   (default: the v6 tree this script ships in)
-# Exit 0 = EVAL-PASS (61/61); nonzero = EVAL-FAIL with the failing scenarios named.
+# Exit 0 = EVAL-PASS (69/69); nonzero = EVAL-FAIL with the failing scenarios named.
 # Windows eval is pending (no PowerShell host here); linux/mac only.
 set -u
 PKG="${1:-$(cd "$(dirname "$0")/../../.." && pwd -P)}"
@@ -558,6 +559,54 @@ grep -q 'session end — shutdown' .history/2026-11-11-evalshutdown/worklog.md \
   && ok "35h shutdown release leaves the B3 checkpoint + session-end log + inbox row" \
   || bad "35h shutdown release is missing checkpoint, session-end log, or inbox row"
 
-echo "== EVAL: $pass passed, $fail failed (of $((pass+fail)) checks across 35 scenarios)"
+# 36: scoper (v6.2) — skill, commands, template, §0 pointers, hook domain
+[ -f .agent/skills/requirements-grill/SKILL.md ] && [ -f .claude/skills/requirements-grill/SKILL.md ] \
+  && grep -q 'grill-me' .agent/skills/requirements-grill/SKILL.md \
+  && grep -q 'Phase 0' .agent/skills/requirements-grill/SKILL.md \
+  && ok "36 scoper skill present in the package and mapped to .claude/" \
+  || bad "36 scoper skill missing from the package or the install"
+[ -f .agent/commands/grill.md ] && [ -f .claude/commands/grill.md ] \
+  && [ -f .agent/commands/helper.md ] && [ -f .claude/commands/helper.md ] \
+  && grep -q 'WORKFLOW_ROLE=scoper' .agent/commands/grill.md \
+  && grep -q 'WORKFLOW_ROLE=helper' .agent/commands/helper.md \
+  && ok "36b grill + helper commands present in the package and mapped to .claude/" \
+  || bad "36b grill/helper commands missing from the package or the install"
+[ -f .history/_templates/intake.template.md ] && [ -d .history/_pending ] \
+  && grep -q 'Checkable acceptance scope' .history/_templates/intake.template.md \
+  && ok "36c intake template present and init created .history/_pending/" \
+  || bad "36c intake template missing or _pending/ not created"
+grep -q '§0 pre-intake' docs/workflow/control-plane-pm.md \
+  && grep -q 'Pre-intake (scoper)' docs/workflow/control-plane-instructions.md \
+  && ok "36d pm.md + instructions.md carry the §0 pointers" \
+  || bad "36d §0 pointers missing"
+printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/.history/_pending/2026-11-16-x-intake.md"},"cwd":"%s"}' "$PROJ" "$PROJ" \
+  | WORKFLOW_ROLE=scoper bash .claude/hooks/domain-guard.sh >/dev/null 2>&1 \
+  && ok "36e hook allows a scoper write to _pending/" \
+  || bad "36e hook blocked a scoper write to _pending/"
+printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/.history/TASK_LIST.md"},"cwd":"%s"}' "$PROJ" "$PROJ" \
+  | WORKFLOW_ROLE=scoper bash .claude/hooks/domain-guard.sh >/dev/null 2>&1 \
+  && bad "36f hook allowed a scoper write to TASK_LIST.md" \
+  || ok "36f hook denies a scoper write outside _pending/"
+
+# 37: helper role (v6.2) — allowlist allow/deny against the installed copy
+hprobe() { # hprobe <file-path> <role> — hook exit code (0 allow, 2 deny)
+  printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"},"cwd":"%s"}' "$1" "$PROJ" \
+    | WORKFLOW_ROLE="$2" bash .claude/hooks/domain-guard.sh >/dev/null 2>&1; echo $?
+}
+[ "$(hprobe "$PROJ/.history/_bin/linux/tokens.sh" helper)" = 0 ] \
+  && [ "$(hprobe "$PROJ/MEMORY.md" helper)" = 0 ] \
+  && [ "$(hprobe "$PROJ/0.scratch/debug.py" helper)" = 0 ] \
+  && [ "$(hprobe "$PROJ/.claude/settings.local.json" helper)" = 0 ] \
+  && ok "37 helper allowlist: _bin, MEMORY.md, 0.scratch, *.local.json all allowed" \
+  || bad "37 helper allowlist denied an allowed path"
+[ "$(hprobe "$PROJ/docs/workflow/control-plane-pm.md" helper)" = 2 ] \
+  && [ "$(hprobe "$PROJ/.history/TASK_LIST.md" helper)" = 2 ] \
+  && [ "$(hprobe "$PROJ/.history/_shared/api-index.md" helper)" = 2 ] \
+  && [ "$(hprobe "$PROJ/.history/_pending/2026-11-16-x-intake.md" helper)" = 2 ] \
+  && [ "$(hprobe "$PROJ/.claude/settings.json" helper)" = 2 ] \
+  && ok "37b helper denylist: plan, TASK_LIST, api-index, _pending, shared settings.json all denied" \
+  || bad "37b helper denylist allowed a denied path"
+
+echo "== EVAL: $pass passed, $fail failed (of $((pass+fail)) checks across 37 scenarios)"
 [ "$fail" -eq 0 ] && { echo "EVAL-PASS: every scenario demonstrated"; exit 0; }
 echo "EVAL-FAIL: $fail check(s) unproven"; exit 1

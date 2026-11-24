@@ -169,6 +169,69 @@ wt="$hr/.worktree/demo"
 [ "$(WORKFLOW_ROOT="$hr" WF_ROLE=worker WF_SLUG=demo bash "$AGENT_DIR/hooks/domain-guard.sh" <<< "$(j_edit "$wt/src/test/FooTest.java" "$wt")" 2>/dev/null; echo $?)" = 0 ] \
   && ok "hook accepts WF_ROLE/WF_SLUG fallback aliases" \
   || bad "hook rejected the WF_* role/slug aliases"
+[ "$(hook scoper "" "$(j_edit "$hr/.history/_pending/2026-11-16-x-intake.md" "$hr")")" = 0 ] \
+  && ok "hook allows a scoper write to .history/_pending/" \
+  || bad "hook blocked a scoper write to _pending/ — scoper role unproven"
+[ "$(hook scoper "" "$(j_edit "$hr/.history/TASK_LIST.md" "$hr")")" = 2 ] \
+  && ok "hook denies a scoper write to TASK_LIST.md" \
+  || bad "hook allowed a scoper write outside _pending/"
+[ "$(hook scoper "" "$(j_edit "$wt/src/test/FooTest.java" "$hr")")" = 2 ] \
+  && ok "hook denies a scoper write to task code" \
+  || bad "hook allowed a scoper write to code"
+[ "$(hook helper "" "$(j_edit "$hr/.history/_bin/linux/tokens.sh" "$hr")")" = 0 ] \
+  && ok "hook allows a helper write to _bin/ (fix the script)" \
+  || bad "hook blocked a helper write to _bin/"
+[ "$(hook helper "" "$(j_edit "$hr/.history/_bin/api-config.env" "$hr")")" = 2 ] \
+  && ok "hook denies a helper write to api-config.env (plane-owned config)" \
+  || bad "hook allowed a helper write to api-config.env — plane config is open"
+[ "$(hook helper "" "$(j_edit "$hr/MEMORY.md" "$hr")")" = 0 ] \
+  && ok "hook allows a helper write to MEMORY.md (fix the memory)" \
+  || bad "hook blocked a helper write to MEMORY.md"
+[ "$(hook helper "" "$(j_edit "$hr/project_workflow-design.md" "$hr")")" = 0 ] \
+  && ok "hook allows a helper write to project_*.md memory" \
+  || bad "hook blocked a helper write to project_*.md"
+[ "$(hook helper "" "$(j_edit "$hr/0.scratch/debug.py" "$hr")")" = 0 ] \
+  && ok "hook allows a helper write to 0.scratch/ (debugging)" \
+  || bad "hook blocked a helper write to 0.scratch/"
+[ "$(hook helper "" "$(j_edit "$hr/.claude/settings.local.json" "$hr")")" = 0 ] \
+  && ok "hook allows a helper write to settings.local.json (local override)" \
+  || bad "hook blocked a helper write to *.local.json"
+[ "$(hook helper "" "$(j_edit "$hr/.claude/settings.json" "$hr")")" = 2 ] \
+  && ok "hook denies a helper write to the shared settings.json (rule 1)" \
+  || bad "hook allowed a helper write to settings.json — the guard is open"
+[ "$(hook helper "" "$(j_edit "$hr/docs/workflow/control-plane-pm.md" "$hr")")" = 2 ] \
+  && ok "hook denies a helper write to the plan (docs/workflow/)" \
+  || bad "hook allowed a helper write to the plan"
+[ "$(hook helper "" "$(j_edit "$wt/src/test/FooTest.java" "$hr")")" = 2 ] \
+  && ok "hook denies a helper write to task code" \
+  || bad "hook allowed a helper write to code"
+[ "$(hook helper "" "$(j_edit "$hr/.history/2026-11-10-demo/worklog.md" "$hr")")" = 2 ] \
+  && ok "hook denies a helper write to task evidence (worklog)" \
+  || bad "hook allowed a helper write to task evidence"
+[ "$(hook helper "" "$(j_edit "$hr/.history/TASK_LIST.md" "$hr")")" = 2 ] \
+  && ok "hook denies a helper write to TASK_LIST.md" \
+  || bad "hook allowed a helper write to TASK_LIST.md"
+[ "$(hook helper "" "$(j_edit "$hr/.history/_shared/api-index.md" "$hr")")" = 2 ] \
+  && ok "hook denies a helper write to the shared api-index" \
+  || bad "hook allowed a helper write to api-index.md"
+[ "$(hook helper "" "$(j_edit "$hr/.history/_pending/2026-11-16-x-intake.md" "$hr")")" = 2 ] \
+  && ok "hook denies a helper write to the scoper's intake docs" \
+  || bad "hook allowed a helper write to _pending/"
+[ "$(hook helper "" "$(j_edit "$hr/.history/_templates/brief.template.md" "$hr")")" = 2 ] \
+  && ok "hook denies a helper write to templates" \
+  || bad "hook allowed a helper write to _templates/"
+[ "$(hook helper "" "$(j_edit "$hr/.agent/skills/plan-review/SKILL.md" "$hr")")" = 2 ] \
+  && ok "hook denies a helper write to package skills" \
+  || bad "hook allowed a helper write to .agent/skills/"
+[ "$(hook helper "" "$(j_read "$hr/docs/workflow/control-plane-pm.md" "$hr")")" = 0 ] \
+  && ok "hook allows a helper to READ the plan (reads are unrestricted)" \
+  || bad "hook blocked a helper read — reads must stay open for debugging"
+[ "$(hook helper "" "$(j_bash "$hr/.history/_bin/mac/server.sh demo stop" "$hr")")" = 2 ] \
+  && ok "hook denies a helper stopping a server (lifecycle is the plane's)" \
+  || bad "hook allowed a helper to stop a server"
+[ "$(hook scoper "" "$(j_bash "$hr/.history/_bin/mac/server.sh demo stop" "$hr")")" = 2 ] \
+  && ok "hook denies a scoper stopping a server" \
+  || bad "hook allowed a scoper to stop a server"
 
 echo "== workflow-init (v6): fresh init, re-run, non-git abort"
 iprobe="$work/init-probe"
@@ -194,6 +257,12 @@ grep -qxF '.history/*' "$iprobe/.gitignore" && grep -qxF '!.history/_shared/' "$
 [ -f "$iprobe/.history/_bin/api-config.env" ] && [ -f "$iprobe/.history/_init_receipt.md" ] \
   && ok "init instantiates api-config.env and writes a receipt" \
   || bad "init missed api-config.env or the receipt"
+[ -d "$iprobe/.history/_pending" ] \
+  && ok "init creates .history/_pending/ for the scoper's intake docs" \
+  || bad "init did not create .history/_pending/"
+[ -f "$iprobe/.history/_templates/intake.template.md" ] \
+  && ok "init carries the intake template" \
+  || bad "init is missing the intake template"
 [ -x "$iprobe/.history/_bin/linux/tick.sh" ] && [ -x "$iprobe/.history/_bin/linux/merge-index.sh" ] && [ -x "$iprobe/.claude/hooks/domain-guard.sh" ] \
   && ok "init makes platform scripts + hook executable (fresh extracts ship 644)" \
   || bad "init left scripts non-executable — status.sh/plane-poll.sh call siblings directly"
@@ -607,6 +676,24 @@ if command -v tmux >/dev/null 2>&1; then
 else
   echo "  skip: tmux tests (tmux not installed — watcher wake unavailable on this machine)"
 fi
+
+
+# 11-18 fix: the watcher registers its own pane at start (from $TMUX), so the
+# plane is wakeable from boot instead of waiting up to 30 min for the backstop.
+proot="$work/pane-root"
+mkdir -p "$proot/.history/_bin"
+cp -r .history/_bin/mac "$proot/.history/_bin/linux"
+mkdir -p "$work/fakebin3"
+cat > "$work/fakebin3/tmux" <<'FAKETMUX'
+#!/bin/sh
+printf '%s\n' 'plane:0.%0'
+FAKETMUX
+chmod +x "$work/fakebin3/tmux"
+fakebin3_abs="$PWD/$work/fakebin3"
+printf '' | (cd "$proot" && TMUX=/tmp/tmux-fake/default,1,0 PATH="$fakebin3_abs:$PATH" PLANE_WATCH_DEBOUNCE=1 bash .history/_bin/mac/plane-watch.sh . --test-mode >/dev/null 2>&1)
+[ "$(cat "$proot/.history/._plane_pane" 2>/dev/null)" = "plane:0.%0" ] \
+  && ok "watcher registers its own pane at start (from \$TMUX)" \
+  || bad "watcher did not register its pane at start"
 
 echo "== worker wake, Phase 2 (v6 track A): inbox change + waiting worker only"
 wwroot="$work/wwatch-root"
@@ -1149,6 +1236,76 @@ grep -q 'session end — shutdown' "$sdroot/.history/2026-11-11-demo/worklog.md"
   && grep -q '^SHUTDOWN — ' "$sdroot/.history/2026-11-11-demo/inbox.md" \
   && ok "shutdown release leaves the B3 checkpoint + session-end log + inbox row" \
   || bad "shutdown release is missing checkpoint, session-end log, or inbox row"
+echo "== scoper + helper (v6.2): skill, commands, template, §0 pointers, template sync"
+[ -f "$AGENT_DIR/skills/requirements-grill/SKILL.md" ] \
+  && ok "requirements-grill skill present under $AGENT_DIR/skills/" \
+  || bad "requirements-grill skill missing from $AGENT_DIR/skills/"
+grep -q "grill-me" "$AGENT_DIR/skills/requirements-grill/SKILL.md" \
+  && grep -q "MIT" "$AGENT_DIR/skills/requirements-grill/SKILL.md" \
+  && grep -q "Phase 0" "$AGENT_DIR/skills/requirements-grill/SKILL.md" \
+  && grep -q "frontier" "$AGENT_DIR/skills/requirements-grill/SKILL.md" \
+  && grep -q "_pending/" "$AGENT_DIR/skills/requirements-grill/SKILL.md" \
+  && ok "grill skill carries the attribution + Phase 0 + frontier + intake-doc output" \
+  || bad "grill skill lost the attribution, Phase 0, frontier, or output contract"
+[ -f "$AGENT_DIR/commands/grill.md" ] && [ -f "$AGENT_DIR/commands/helper.md" ] \
+  && ok "grill + helper commands present under $AGENT_DIR/commands/" \
+  || bad "grill or helper command missing from $AGENT_DIR/commands/"
+grep -q "disable-model-invocation: true" "$AGENT_DIR/commands/grill.md" \
+  && grep -q "WORKFLOW_ROLE=scoper" "$AGENT_DIR/commands/grill.md" \
+  && grep -q "printenv WORKFLOW_ROLE" "$AGENT_DIR/commands/grill.md" \
+  && ok "grill command is user-invoked only and refuses without WORKFLOW_ROLE=scoper" \
+  || bad "grill command lost the user-only flag or the role check"
+grep -q "disable-model-invocation: true" "$AGENT_DIR/commands/helper.md" \
+  && grep -q "WORKFLOW_ROLE=helper" "$AGENT_DIR/commands/helper.md" \
+  && grep -q "Never edit" "$AGENT_DIR/commands/helper.md" \
+  && ok "helper command is user-invoked only, refuses without WORKFLOW_ROLE=helper, and states the never-edit list" \
+  || bad "helper command lost the user-only flag, the role check, or the brief"
+[ -f .history/_templates/intake.template.md ] \
+  && grep -q "Checkable acceptance scope" .history/_templates/intake.template.md \
+  && grep -q "Scope — out" .history/_templates/intake.template.md \
+  && grep -q "Open questions" .history/_templates/intake.template.md \
+  && grep -q "Proposed slug" .history/_templates/intake.template.md \
+  && ok "intake template carries the draft's contents" \
+  || bad "intake template is missing or lost a required section"
+grep -q "§0 pre-intake" docs/workflow/control-plane-pm.md \
+  && grep -q "## 0. Pre-intake (scoper)" docs/workflow/control-plane-instructions.md \
+  && grep -q "Never auto-grill" docs/workflow/control-plane-instructions.md \
+  && ok "pm.md + instructions.md carry the §0 pointers" \
+  || bad "§0 pointers missing from the plane docs"
+[ "$(wc -l < "$AGENT_DIR/skills/requirements-grill/SKILL.md" | tr -d ' ')" -le 100 ] \
+  && [ "$(wc -l < "$AGENT_DIR/commands/grill.md" | tr -d ' ')" -le 100 ] \
+  && [ "$(wc -l < "$AGENT_DIR/commands/helper.md" | tr -d ' ')" -le 100 ] \
+  && ok "new skill + commands are within the 100-line cap" \
+  || bad "a new skill or command exceeds 100 lines"
+[ -f "$iprobe2/.claude/commands/grill.md" ] && [ -f "$iprobe2/.claude/commands/helper.md" ] \
+  && ok "fresh init maps the grill + helper commands to .claude/commands/" \
+  || bad "fresh init did not map grill.md/helper.md to .claude/"
+rm -f "$iprobe2/.claude/commands/grill.md" "$iprobe2/.claude/commands/helper.md"
+bash "$iprobe2/.history/_bin/linux/init.sh" "$iprobe2" >/dev/null 2>&1
+[ -f "$iprobe2/.claude/commands/grill.md" ] && [ -f "$iprobe2/.claude/commands/helper.md" ] \
+  && ok "init re-run restores missing grill + helper command files (sync is generic over the commands dir)" \
+  || bad "init re-run did not restore grill.md/helper.md"
+# template sync (v6.2): package run against a separate live repo delivers
+# a missing template; a template missing from every source aborts loudly.
+tpkg="$work/tpl-pkg"
+mkdir -p "$tpkg/.history/_templates" "$tpkg/.history/_bin"
+cp -r docs "$AGENT_DIR" "$tpkg/"
+[ "$AGENT_DIR" = ".agent" ] || mv "$tpkg/$AGENT_DIR" "$tpkg/.agent"
+cp -r .history/_templates/* "$tpkg/.history/_templates/"
+cp -r .history/_bin/linux "$tpkg/.history/_bin/linux"
+tlive="$work/tpl-live"
+mkdir -p "$tlive"; git init -q "$tlive"
+bash "$tpkg/.history/_bin/linux/init.sh" "$tlive" >/dev/null 2>&1
+[ -f "$tlive/.history/_templates/intake.template.md" ] \
+  && ok "init run from a package dir delivers the intake template to a separate live repo" \
+  || bad "template sync did not deliver intake.template.md"
+[ -f "$tlive/.history/TASK_LIST.md" ] \
+  && ok "split-flow init still seeds TASK_LIST.md" \
+  || bad "split-flow init did not seed TASK_LIST.md"
+rm -f "$tlive/.history/_templates/intake.template.md" "$tpkg/.history/_templates/intake.template.md"
+bash "$tpkg/.history/_bin/linux/init.sh" "$tlive" 2>&1 | grep -q 'INIT-ABORTED' \
+  && ok "init aborts when intake.template.md is missing from every source (partial copy caught)" \
+  || bad "init installed without the intake template — partial copy not caught"
 rm -rf "$work" ".history/relay-gate-selftest"
 if [ $fail -eq 0 ]; then echo "SELFTEST-PASS: every gate demonstrated failing and passing"
 else echo "SELFTEST-FAIL: one or more gates unproven"; fi

@@ -8,6 +8,14 @@ phase agents per the dictated order (including the §3.1 reviewer); spawn a fix 
 your ratify duties — then the [core spec](control-plane-pm.md) and [parallel
 rules](parallel-agents.md). You verify anchor evidence, not methodology.
 
+## 0. Pre-intake (scoper)
+
+§0 only when the user invokes it: a rough idea they cannot state as a
+requirement goes to the scoper (`/grill`, skill `requirements-grill`),
+which interviews them and writes an intake doc to `.history/_pending/`;
+charter from it at §1 without re-grilling (open questions become the
+task's initial qa.md questions). Never auto-grill.
+
 ## 1. Boot and recover the plane
 
 1. Acquire `.history/plane.lock`; fresher than `LOCK_STALE` → alert, stop without edits. Stale-lock takeover requires verifying the recorded process
@@ -19,8 +27,7 @@ rules](parallel-agents.md). You verify anchor evidence, not methodology.
    rows by artifact liveness (commits and mtimes outrank pids); surface open
    QA/review items.
 4. Route declared states (`state:` lines via `status.sh`): answer every BLOCKED row within one poll cycle — to its `clearer` or cleared; carrying one
-   silently is a plane failure; WAITING rows once older than `STALE_AFTER`;
-   tally `kind:process` separately (workflow defects feed the retrospective).
+   silently is a plane failure; WAITING rows once older than `STALE_AFTER`; tally `kind:process` separately (workflow defects feed the retrospective).
 5. Clear spent shutdown markers first (`.history/SHUTDOWN.md`, `.history/._watcher_stop`) — a stale signal would stop workers that just booted. Start the event-driven wake: run `.history/_bin/<platform>/plane-watch.sh`
    in the background (watches `.history/`, debounces 15 s, wakes you via tmux
    only on a non-empty diff) and register a **durable** backstop wake every
@@ -33,22 +40,19 @@ rules](parallel-agents.md). You verify anchor evidence, not methodology.
 
 The watcher wakes you between backstops; the backstop wake runs the poll:
 diff probe, `plane.lock` refresh, time-gated stale/relay scans. On changed output,
-inspect named files and apply [async-inputs.md](async-inputs.md). Before a
-conflicting grant, force a stale scan (`--stale-now` / `-StaleNow`) and verify candidates first.
+inspect named files and apply [async-inputs.md](async-inputs.md). Before a conflicting grant, force a stale scan (`--stale-now` / `-StaleNow`) and verify candidates first.
 
 After CLOSE, assign the next phase in the worker inbox only if the charter authorizes it; otherwise ask the human. Manual-test (§6) is the exception: it is
 charter-authorized by default — at unit CLOSE a waive on file (charter `waived-by-human`
 or a `WAIVE` relay) skips the campaign (record WAIVED); without one, charter the
 campaign — never stop to ask. Append observations to worklogs; never
 edit above your own last entry. Plane message lines (`— plane (verb) …`) carry
-`kind:<question|decision|blocker|status|handoff>` so the board can filter them;
-no marker → uncategorized, never dropped.
+`kind:<question|decision|blocker|status|handoff>` so the board can filter them; no marker → uncategorized, never dropped.
 
 **Held answers release through conversation, not commands** — surface filled
 qa.md/review.md A-slots at the human's next REPL interaction; any natural
 reply releases them ("still editing" keeps the hold); a verbal adjudication
-is itself the command, fill + release, no `release` formula. Polls never
-auto-release — human may be mid-edit ([core spec §2](control-plane-pm.md)).
+is itself the command, fill + release, no `release` formula. Polls never auto-release — human may be mid-edit ([core spec §2](control-plane-pm.md)).
 ## 3. Scope tasks and consume reports
 
 - Brief = charter: goal, acceptance scope, constraints, resource limits, DoD,
@@ -58,10 +62,7 @@ auto-release — human may be mid-edit ([core spec §2](control-plane-pm.md)).
 - Readiness fails-closed: no GRANT when the brief lacks its data-class line or
   carries fewer than 3 falsifiable acceptance criteria, each paired with its
   evidence command; an API-calling phase also needs a live engine
-  (`api-config.env` instantiated + login smoke-tested — [verify
-  duties](verify-duties.md#api-config-instantiation-boot-detail)). An unready
-  brief stays PLANNED with the gap named in qa.md — one intake pass, not a
-  respawn cycle.
+  (`api-config.env` instantiated + login smoke-tested — [verify duties](verify-duties.md#api-config-instantiation-boot-detail)). An unready brief stays PLANNED with the gap named in qa.md — one intake pass, not a respawn cycle.
 - Scope only; unclear scope → bounded discovery phase, never plane-side
   implementation exploration.
 - Coverage-shaped charter (gap-list output, no single terminal goal) →
@@ -75,8 +76,7 @@ auto-release — human may be mid-edit ([core spec §2](control-plane-pm.md)).
 ## 4. Ratify, resolve, and verify
 
 - Grant atomically or deny with a reason in `workers.md` (method-mismatch
-  included); apply [parallel agents §5](parallel-agents.md#5-occupied-task-conflicts).
-  Stale contention → challenge ladder; re-verify pid identity before kill —
+  included); apply [parallel agents §5](parallel-agents.md#5-occupied-task-conflicts). Stale contention → challenge ladder; re-verify pid identity before kill —
   kill failure means no successor grant and human escalation.
 - Relay narrowed rulings across affected QA/review artifacts; mark superseded
   ones; conflicts go to the human. Never let a respawn brief override files.

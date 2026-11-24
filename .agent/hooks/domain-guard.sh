@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# domain-guard.sh — PreToolUse hook for v6.1 (domain enforcement + deny rules).
+# domain-guard.sh — PreToolUse hook for v6.2 (domain enforcement + deny rules).
 #
 # Contract: the agent CLI runs this before every matched tool call
 # (matcher: Edit|Write|Read|Bash, wired in the agent-config settings — .agent/settings.json pre-adoption, .claude/settings.json on Claude Code).
@@ -22,33 +22,64 @@
 #      after this hook verifies the pid's LIVE properties (cmdline marker
 #      from plane-controlled api-config.env + cwd under the task worktree
 #      + LISTEN socket on the task port). A worker may stop only its own
-#      slug's server; the plane may stop any slug's. server.sh
-#      start/status need no gate (no kill involved).
-#   3. Structural boundary: a worker may Edit/Write only under its own
-#      worktree (.worktree/<slug>/) and its own task dir
-#      (.history/<date>-<slug>/). The plane may Edit/Write only under
-#      .history/ (TASK_LIST, status-table mirrors, worklog closing
-#      entries, plane.lock) — never under .worktree/ or repo code.
-#      Reads are not structurally blocked (except rule 1).
+#      slug's server; the plane may stop any slug's. Helper and scoper
+#      may not stop servers at all — server lifecycle belongs to the
+#      plane. server.sh start/status need no gate (no kill involved).
+#   3. Structural boundary (Edit/Write only; reads are not structurally
+#      blocked except rule 1):
+#      plane  — only under .history/ (TASK_LIST, status-table mirrors,
+#               worklog closing entries, plane.lock) — never under
+#               .worktree/ or repo code.
+#      worker — only under its own worktree (.worktree/<slug>/) and its
+#               own task dir (.history/<date>-<slug>/).
+#      scoper — only under .history/_pending/ (intake docs); nothing else
+#               in-repo. A scoper in the project root would otherwise
+#               derive as plane and could write anywhere under .history/.
+#      helper — an in-repo ALLOWLIST, fail-closed (fix memory, scripts,
+#               debugging, local settings — never plan/code/evidence):
+#               .history/_bin/ scripts only (*.sh/*.ps1 — api-config.env
+#               is plane-owned config, not a script), 0.scratch/**,
+#               basename MEMORY.md or project_*.md anywhere in-repo,
+#               basename *.local.json (local settings overrides).
+#               Out-of-repo paths are already allowed before this rule
+#               (v6.1 early-allow) — that is how a helper writes its own
+#               memory under ~/.claude/projects/.
+#               The shared .claude/settings.json (and .agent/settings.json)
+#               stays blocked for every role by rule 1; only *.local.json
+#               files are helper-editable.
 #   4. Claim-row domain (worker only, best effort): when the claim row's
 #      Write domain cell contains path tokens (e.g. `src/test/**`), a code
 #      write must also sit under one of them. Free-text domains with no
 #      path tokens fall back to rule 3; the plane still ratifies the
 #      free-text domain at CLOSE (anchor B2).
 #
-# Role/slug: WORKFLOW_ROLE=plane|worker and WORKFLOW_SLUG=<slug>, set by
-# the spawn wrapper. WF_ROLE/WF_SLUG are accepted as fallback aliases
+# Role/slug: WORKFLOW_ROLE=plane|worker|scoper|helper and
+# WORKFLOW_SLUG=<slug>, set by the spawn wrapper (or, for a user-invoked
+# /grill or /helper session, by the user at session start — the hook reads
+# the role from the session environment and cannot see a value exported
+# afterwards). WF_ROLE/WF_SLUG are accepted as fallback aliases
 # (live-install names from the 2026-11-11 hook probe; canonical is
 # WORKFLOW_*). Otherwise derived from cwd: under
 # .worktree/<slug> -> worker with that slug; anything else -> plane.
+# CWD cannot distinguish helper from plane (both run in the main
+# checkout), so the env var is the ONLY signal for helper — and for
+# scoper, which also runs in the project root. The unclaimed=plane
+# default is deliberate and unchanged: an unset role is a plane, never
+# a helper or scoper (a session that never asked for a narrow domain
+# must not silently gain one — and must not silently lose the plane's).
 # A worker with no determinable slug is denied Edit/Write with a message
 # telling it to set WORKFLOW_SLUG or run from the task worktree.
 # WORKFLOW_ROOT overrides the project root (test-only; default: the repo
 # this script ships in, resolved from the script's own location).
 #
-# Known limits (v5.4): shell-redirection writes (`> file`) are not
-# intercepted — only Edit/Write tool calls are; the deny list + rule 3
-# cover the normal path. The Bash patterns are coarse substrings (an
+# Known limits (v6.2): shell-redirection writes (`> file`) are not
+# intercepted — only Edit/Write tool calls are. That bounds the helper
+# (and scoper) roles: they are enforced at the Edit/Write tool level —
+# a guardrail + audit signal, not a sandbox. A helper that runs a patch
+# script via Bash (e.g. a python patch script, the exact path the
+# 2026-11-16 migration fix used) bypasses the hook entirely; the
+# migration's live fix did exactly that. Do not try to close this in
+# the hook — the Bash patterns are coarse substrings already (an
 # `echo "rm -rf"` is blocked too). Windows port pending (bash only,
 # linux/mac).
 #
@@ -300,6 +331,9 @@ if [ "$TOOL" = "Bash" ] && [ -n "$CMD" ]; then
     done
     set +f
     if [ -n "$srv" ]; then
+      if [ "$ROLE" = "helper" ] || [ "$ROLE" = "scoper" ]; then
+        deny "helper/scoper may not stop servers — server lifecycle belongs to the plane"
+      fi
       # Resolve the script path two ways: relative to the session cwd
       # (e.g. ../../.history/... from a worktree) AND relative to the
       # repo root (workers quote the root-relative .history/... shape).
@@ -362,6 +396,25 @@ if [ "$TOOL" = "Edit" ] || [ "$TOOL" = "Write" ]; then
   under "$APATH" "$ROOT" || exit 0
   if [ "$ROLE" = "plane" ]; then
     under "$APATH" "$ROOT/.history" || deny "plane may write only under .history/: $FPATH"
+  elif [ "$ROLE" = "scoper" ]; then
+    under "$APATH" "$ROOT/.history/_pending" || deny "scoper may write only under .history/_pending/: $FPATH"
+  elif [ "$ROLE" = "helper" ]; then
+    # Helper allowlist, fail-closed: _bin/ SCRIPTS only (*.sh/*.ps1 —
+    # api-config.env is plane-owned config, not a script) + 0.scratch/ +
+    # memory files + local settings files. Everything else in-repo denied.
+    if under "$APATH" "$ROOT/0.scratch"; then
+      : # allowed (debugging/scratch)
+    elif under "$APATH" "$ROOT/.history/_bin"; then
+      case "$(basename "$APATH")" in
+        *.sh|*.ps1) : ;;  # workflow scripts only
+        *) deny "helper may edit only scripts under .history/_bin/ (api-config.env is plane-owned): $FPATH" ;;
+      esac
+    else
+      case "$(basename "$APATH")" in
+        MEMORY.md|project_*.md|*.local.json) : ;;
+        *) deny "helper may edit only _bin/ scripts, 0.scratch/, memory files (MEMORY.md, project_*.md) and *.local.json: $FPATH" ;;
+      esac
+    fi
   else
     [ -n "$SLUG" ] || deny "no task slug: set WORKFLOW_SLUG or run from the task worktree"
     WT="$ROOT/.worktree/$SLUG"

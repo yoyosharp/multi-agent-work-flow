@@ -45,6 +45,15 @@
 # The watcher stays alive through the shutdown wait (step 4) so the SHUTDOWN
 # inbox wake is still delivered. Marker vs signal: ._watcher_stop stops the
 # watcher; .history/SHUTDOWN.md signals the workers — different files.
+# Reaping (11-18 fix): the event source runs as a process-substitution
+# subshell. When the watcher exits (stop marker, EOF, TERM) the subshell
+# was orphaned and kept waiting on inotifywait/fswatch — the 11-16 selftest
+# leak (~26 plane-watch processes on deleted _selftest cwds) and a
+# production leak on every /shutdown (real inotifywait -m never exits).
+# An EXIT trap now reaps the watcher's whole descendant tree
+# (kill_descendants via pgrep -P), and the loop exits if the project root
+# is gone. If pgrep is missing the reaping is skipped (the watcher still
+# exits); the leak then persists until the event source exits on its own.
 set -u
 
 ROOT="${1:-}"
@@ -78,6 +87,22 @@ state_put() { # state_put <key> <value> — rewrite the small state file
   mv "$tmp" "$STATE"
 }
 state_get() { sed -n "s/^$1=//p" "$STATE" 2>/dev/null | tail -1; }
+
+kill_descendants() { # kill_descendants <pid> — TERM a pid's whole descendant tree
+  local _p _c
+  local IFS=$' \t\n' # the trap may inherit an empty IFS from an interrupted `IFS= read`
+  _p="$1"
+  command -v pgrep >/dev/null 2>&1 || return 0
+  for _c in $(pgrep -P "$_p" 2>/dev/null); do kill_descendants "$_c"; done
+  kill "$_p" 2>/dev/null || true
+}
+
+cleanup_watcher() { # cleanup_watcher — reap the event-source tree on any exit
+  local _c
+  local IFS=$' \t\n' # see kill_descendants: a trap inherits the interrupted read's empty IFS
+  command -v pgrep >/dev/null 2>&1 || return 0
+  for _c in $(pgrep -P $$ 2>/dev/null); do kill_descendants "$_c"; done
+}
 
 sha_file() { # sha_file <path> — portable sha256 (linux sha256sum, mac shasum)
   case "$PLATFORM" in
@@ -187,15 +212,32 @@ fi
 # v6.1 shutdown: a stop marker means the plane shut down — do not start
 # (checked before the state write, so a stillborn watcher leaves no state).
 if [ -f "$ROOT/.history/._watcher_stop" ]; then log "stop marker present — watcher not starting"; exit 0; fi
+
+# Pane registration (11-18 fix): register this pane as the plane's wake
+# target at start, same mechanism as the backstop — the watcher inherits
+# $TMUX from the plane that launched it, so display-message reports the
+# plane's own pane, never a guess. Without this the pane is only registered
+# by the first backstop run, up to 30 min after boot, and the watcher cannot
+# wake the plane until then. Skipped when not in tmux ($TMUX unset).
+if command -v tmux >/dev/null 2>&1 && [ -n "${TMUX:-}" ]; then
+  pane="$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_id}' 2>/dev/null || true)"
+  if [ -n "$pane" ] && [ "$(cat "$ROOT/.history/._plane_pane" 2>/dev/null)" != "$pane" ]; then
+    printf '%s\n' "$pane" > "$ROOT/.history/._plane_pane"
+  fi
+fi
 printf 'pid=%s\nstarted=%s\ntool=%s\n' "$$" "$(date '+%F %T')" "$([ "$TEST_MODE" = 1 ] && echo test-mode || echo "$PLATFORM")" > "$STATE"
 log "watcher started (pid $$, debounce ${DEBOUNCE}s, mode $([ "$TEST_MODE" = 1 ] && echo test || echo "$PLATFORM"))"
 trap 'log "watcher stopping"; exit 0' TERM INT
+trap 'cleanup_watcher' EXIT
 
 pending=0
 while true; do
   # v6.1 shutdown: exit at the top of every cycle when the stop marker
   # appears (its creation wakes the read below, so this fires at once).
   if [ -f "$ROOT/.history/._watcher_stop" ]; then log "stop marker present — watcher stopping"; exit 0; fi
+  # A watcher whose project root is gone has nothing to watch — exit
+  # instead of looping forever on a deleted tree (the 11-16 leak shape).
+  if [ ! -d "$ROOT" ]; then log "project root $ROOT gone — watcher stopping"; exit 0; fi
   # NB: capture read's status directly — `$?` after an `if` is 0 when the
   # condition is false, so the old `if read...; then...; fi; rc=$?` read 0
   # forever and spun. read returns 0 = line, 1 = EOF, >128 = timeout.

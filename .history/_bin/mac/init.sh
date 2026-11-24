@@ -49,6 +49,7 @@ else
   ROOT="$(cd "$ROOT" 2>/dev/null && pwd -P)" || { echo "INIT-ABORTED: no such directory: $1" >&2; exit 1; }
 fi
 BIN="$(cd "$(dirname "$0")" && pwd -P)"
+PKG_TEMPLATES="$(cd "$(dirname "$0")/../../_templates" 2>/dev/null && pwd -P)"
 PLATFORM="linux"; [ "$(uname -s)" = "Darwin" ] && PLATFORM="mac"
 WATCH_TOOL="inotifywait"; [ "$PLATFORM" = "mac" ] && WATCH_TOOL="fswatch"
 
@@ -72,9 +73,17 @@ if [ -z "$hard_fail" ]; then
     && echo "  ok: $ROOT is inside a git work tree" \
     || hard_fail="$ROOT is not inside a git work tree (workflow needs git worktrees/branches)"
 fi
-[ -d "$ROOT/.history/_templates" ] && [ -f "$ROOT/.history/_templates/TASK_LIST.template.md" ] \
-  && [ -f "$ROOT/.history/_templates/api-index.template.md" ] \
-  && echo "  ok: package templates present" \
+# package templates: the live _templates/ or the package's own dir beside
+# this script (a package run against a separate live repo). Either
+# location must hold all three; a partial copy aborts loudly instead of
+# installing without /grill support.
+TPL_OK=""
+for tdir in "$ROOT/.history/_templates" "$PKG_TEMPLATES"; do
+  if [ -f "$tdir/TASK_LIST.template.md" ] && [ -f "$tdir/api-index.template.md" ] && [ -f "$tdir/intake.template.md" ]; then
+    TPL_OK="$tdir"; break
+  fi
+done
+[ -n "$TPL_OK" ] && echo "  ok: package templates present" \
   || hard_fail="package templates missing under $ROOT/.history/_templates (incomplete package copy)"
 
 command -v python3 >/dev/null 2>&1 \
@@ -144,13 +153,30 @@ if [ "$CHECK_ONLY" = 1 ]; then
   exit 0
 fi
 
+# --- template sync (v6.2): a package upgrade must deliver new templates
+# (e.g. intake.template.md for /grill) to an existing install, never
+# overwriting an adapted one. Source is the templates dir the floor check
+# found; when it is the live _templates/ itself this is a no-op (the copy
+# already delivered them), when it is the package dir beside this script
+# the missing files are copied in — before any step below reads them.
+if [ -n "$TPL_OK" ] && [ "$TPL_OK" != "$ROOT/.history/_templates" ]; then
+  mkdir -p "$ROOT/.history/_templates"
+  for t in "$TPL_OK"/*; do
+    [ -f "$t" ] || continue
+    tpl="$(basename "$t")"
+    if [ ! -f "$ROOT/.history/_templates/$tpl" ]; then
+      cp "$t" "$ROOT/.history/_templates/$tpl" && note_created ".history/_templates/$tpl (new template from package)"
+    fi
+  done
+fi
+
 # --- mode ----------------------------------------------------------------
 MODE="fresh"
 [ -f "$ROOT/.history/TASK_LIST.md" ] && MODE="existing"
 echo "== init ($MODE) — $ROOT"
 
 # --- 1. dirs ---------------------------------------------------------------
-mkdir -p "$ROOT/.history" "$ROOT/.worktree" "$ROOT/.history/_bin" "$ROOT/.history/_templates"
+mkdir -p "$ROOT/.history" "$ROOT/.worktree" "$ROOT/.history/_bin" "$ROOT/.history/_templates" "$ROOT/.history/_pending"
 note_kept ".history/ + .worktree/ dirs present"
 # scripts ship non-executable in the package (zip loses +x), so status.sh /
 # plane-poll.sh fail calling siblings directly on a fresh extract — make

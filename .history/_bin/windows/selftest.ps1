@@ -251,6 +251,21 @@ if (-not (Select-String -Path "$sd\.history\2026-11-11-demo\workers.md" -Pattern
 else { "  SELFTEST-FAIL: a live claim row survived the shutdown release"; $fail = 1 }
 if ((Select-String -Path "$sd\.history\2026-11-11-demo\worklog.md" -Pattern 'session end — shutdown' -Quiet) -and (Select-String -Path "$sd\.history\2026-11-11-demo\worklog.md" -Pattern 'B3 checkpoint' -Quiet) -and (Select-String -Path "$sd\.history\2026-11-11-demo\inbox.md" -Pattern '^SHUTDOWN — ' -Quiet)) { "  ok: shutdown release leaves the B3 checkpoint + session-end log + inbox row" }
 else { "  SELFTEST-FAIL: shutdown release is missing checkpoint, session-end log, or inbox row"; $fail = 1 }
+"== scoper + helper (v6.2): skill, commands, template, §0 pointers (static only)"
+# Static assertions only — the hook is bash, no Windows port, so the
+# allow/deny behavior is proven by the linux/mac selftest, not here.
+if ((Test-Path (Join-Path $AgentDir 'skills\requirements-grill\SKILL.md')) -and (Select-String -Path (Join-Path $AgentDir 'skills\requirements-grill\SKILL.md') -Pattern 'grill-me' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'skills\requirements-grill\SKILL.md') -Pattern 'Phase 0' -Quiet)) { "  ok: requirements-grill skill present with attribution + Phase 0" }
+else { "  SELFTEST-FAIL: requirements-grill skill missing or lost attribution/Phase 0"; $fail = 1 }
+if ((Test-Path (Join-Path $AgentDir 'commands\grill.md')) -and (Select-String -Path (Join-Path $AgentDir 'commands\grill.md') -Pattern 'WORKFLOW_ROLE=scoper' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'commands\grill.md') -Pattern 'disable-model-invocation: true' -Quiet)) { "  ok: grill command present, user-invoked only, refuses without WORKFLOW_ROLE=scoper" }
+else { "  SELFTEST-FAIL: grill command missing or lost the role check"; $fail = 1 }
+if ((Test-Path (Join-Path $AgentDir 'commands\helper.md')) -and (Select-String -Path (Join-Path $AgentDir 'commands\helper.md') -Pattern 'WORKFLOW_ROLE=helper' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'commands\helper.md') -Pattern 'Never edit' -Quiet)) { "  ok: helper command present, user-invoked only, states the never-edit list" }
+else { "  SELFTEST-FAIL: helper command missing or lost the role check/brief"; $fail = 1 }
+if ((Test-Path '.history\_templates\intake.template.md') -and (Select-String -Path '.history\_templates\intake.template.md' -Pattern 'Checkable acceptance scope' -Quiet) -and (Select-String -Path '.history\_templates\intake.template.md' -Pattern 'Proposed slug' -Quiet)) { "  ok: intake template present with the required sections" }
+else { "  SELFTEST-FAIL: intake template missing or incomplete"; $fail = 1 }
+if ((Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern '§0 pre-intake' -Quiet) -and (Select-String -Path 'docs\workflow\control-plane-instructions.md' -Pattern 'Pre-intake \(scoper\)' -Quiet)) { "  ok: pm.md + instructions.md carry the §0 pointers" }
+else { "  SELFTEST-FAIL: §0 pointers missing from the plane docs"; $fail = 1 }
+if ((Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern 'helper may edit only scripts under .history/_bin/' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern 'helper/scoper may not stop servers' -Quiet)) { "  ok: helper _bin scripts-only + helper/scoper server-stop deny present in hook" }
+else { "  SELFTEST-FAIL: hook missing the helper _bin scripts-only or server-stop deny"; $fail = 1 }
 Remove-Item -Recurse -Force $work
 Remove-Item -Recurse -Force $rg
 if ($fail -eq 0) { "SELFTEST-PASS: every gate demonstrated failing and passing"; exit 0 }

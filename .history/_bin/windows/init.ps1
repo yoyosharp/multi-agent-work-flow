@@ -32,7 +32,12 @@ if ($hardFail -eq "") {
   if ($LASTEXITCODE -eq 0) { "  ok: $Root is inside a git work tree" }
   else { $hardFail = "$Root is not inside a git work tree (workflow needs git worktrees/branches)" }
 }
-if ((Test-Path "$Root\.history\_templates\TASK_LIST.template.md") -and (Test-Path "$Root\.history\_templates\api-index.template.md")) { "  ok: package templates present" }
+$pkgTemplates = Join-Path $PSScriptRoot "..\..\_templates"
+$tplOk = ""
+foreach ($td in @("$Root\.history\_templates", $pkgTemplates)) {
+  if ((Test-Path "$td\TASK_LIST.template.md") -and (Test-Path "$td\api-index.template.md") -and (Test-Path "$td\intake.template.md")) { $tplOk = $td; break }
+}
+if ($tplOk -ne "") { "  ok: package templates present" }
 else { $hardFail = "package templates missing under $Root\.history\_templates (incomplete package copy)" }
 
 $pythonVersion = ""
@@ -102,13 +107,26 @@ if ($CheckOnly) {
   exit 0
 }
 
+# --- template sync (v6.2): a package upgrade must deliver new templates
+# (e.g. intake.template.md for /grill) to an existing install, never
+# overwriting an adapted one. Source is the templates dir the floor check
+# found; when it is the live _templates/ itself this is a no-op.
+if (($tplOk -ne "") -and ($tplOk -ne "$Root\.history\_templates")) {
+  New-Item -ItemType Directory -Force -Path "$Root\.history\_templates" | Out-Null
+  foreach ($t in Get-ChildItem $tplOk -File -ErrorAction SilentlyContinue) {
+    if (-not (Test-Path "$Root\.history\_templates\$($t.Name)")) {
+      Copy-Item $t.FullName "$Root\.history\_templates\$($t.Name)"; Add-Created ".history\_templates\$($t.Name) (new template from package)"
+    }
+  }
+}
+
 # --- mode ------------------------------------------------------------------
 $mode = "fresh"
 if (Test-Path "$Root\.history\TASK_LIST.md") { $mode = "existing" }
 "== init ($mode) — $Root"
 
 # --- 1. dirs ----------------------------------------------------------------
-New-Item -ItemType Directory -Force -Path "$Root\.history","$Root\.worktree","$Root\.history\_bin","$Root\.history\_templates" | Out-Null
+New-Item -ItemType Directory -Force -Path "$Root\.history","$Root\.worktree","$Root\.history\_bin","$Root\.history\_templates","$Root\.history\_pending" | Out-Null
 Add-Kept ".history/ + .worktree/ dirs present"
 
 # --- 2. gitignore: per-component sharing (v6 API-index track) ------------------

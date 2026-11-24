@@ -677,3 +677,99 @@ line-counted below; nothing was dropped silently.
 - **Boot clears spent markers** (instructions §1): a stale `SHUTDOWN.md` or `._watcher_stop` is removed before the watcher starts, so a new boot never inherits the old shutdown.
 - **Init re-run now delivers missing command files too** (same never-overwrite policy as skill dirs; linux/mac `init.sh` + Windows `init.ps1`) — otherwise a new command would never reach an upgraded install. Fresh installs copy the whole `.agent/` dir as before.
 - **Windows**: no watcher, so no watcher handling; `plane-poll.ps1` (the backstop) checks the stop marker and exits like `plane-poll.sh`.
+
+## 2026-11-16 — v6.2: Scoper role (§0 pre-intake) + helper role
+
+- **Scoper (§0 pre-intake)**: some tasks are so hard even the user
+  struggles to state the requirement — §1 intake assumes he can. The
+  fix is a step BEFORE §1: `/grill <rough idea>` (command
+  `.agent/commands/grill.md`, user-invoked only —
+  `disable-model-invocation: true`) opens a Scoper session that runs
+  the `requirements-grill` skill (`.agent/skills/requirements-grill/`),
+  adapted from Matt Pocock's `grill-me` / `grilling`
+  (github.com/mattpocock/skills, MIT — attribution kept in the skill):
+  the interview method is his (design tree, frontier rounds, numbered
+  questions each with a recommended answer, explore-the-codebase
+  instead of asking), the adaptations are this workflow's — Phase 0
+  shaping first (goal in one line, context, what "done" looks like,
+  because grill-me assumes a plan exists and the scoper starts from a
+  rough idea), and the output is an intake doc, not a refined plan.
+  The scoper writes `.history/_pending/<date>-<slug>-intake.md` from
+  `.history/_templates/intake.template.md` only after the user
+  confirms shared understanding; the plane charters from it at §1
+  without re-grilling (open questions become the task's initial qa.md
+  questions). It produces the REQUIREMENT, not the plan — the §2 plan
+  gate, plan-review, and the worker's bounded discovery are untouched.
+  Role name settled by elimination (recorded in the design draft):
+  PO owns the backlog and decides (that is the user); BA works FROM
+  requirements (that is the worker's §2 plan phase); the role PROVIDES
+  the requirements, which is what "Scoper" names. Hook role `scoper`:
+  write domain `.history/_pending/` only (a scoper in the project
+  root would otherwise derive as plane and could write anywhere under
+  `.history/`). `pm.md` + `control-plane-instructions.md` carry the §0
+  pointers (both files back at exactly 100 lines). Init creates
+  `.history/_pending/`, requires `intake.template.md` in the floor
+  check, and syncs missing templates on re-run (see below).
+- **Helper role (from the 2026-11-16 live migration incident)**:
+  a helper session fixing memory under `~/.claude/projects/` was
+  blocked by the hook — it ran in the main checkout, so it derived
+  as plane, and the plane may write only under `.history/`. The
+  v6.1 out-of-repo early-allow fixed the memory path, but the
+  in-repo boundary stayed wrong: a helper could still edit plan,
+  code, and evidence. v6.2 gives the helper its own hook role,
+  `WORKFLOW_ROLE=helper` (WF_ROLE fallback): CWD cannot
+  distinguish helper from plane (both run in the main checkout), so
+  the env var is the ONLY signal — documented in the hook header,
+  and the `/helper` command (`.agent/commands/helper.md`,
+  user-invoked only) refuses to proceed unless the variable reads
+  `helper` (it must be set at session start; the hook cannot see a
+  value exported afterwards). The unclaimed=plane default is
+  deliberately UNCHANGED: an unset role is a plane, never a helper
+  or scoper. Write domain is an in-repo ALLOWLIST, fail-closed:
+  `.history/_bin/` scripts only (`*.sh`/`*.ps1` — `api-config.env`
+  is plane-owned config, not a script), `0.scratch/**`
+  (debugging), basename `MEMORY.md` or `project_*.md` anywhere
+  in-repo (memory files), basename `*.local.json` (local settings
+  overrides — see below); out-of-repo stays allowed by the v6.1
+  early-allow. DENIED: `docs/workflow/*` (plan), `src/*` and
+  `.worktree/*` (code), task evidence (worklog/qa/review/inbox/
+  workers, `TASK_LIST.md`, `_shared/api-index.md`),
+  `.history/_pending/` (scoper's intake docs),
+  `.history/_templates/`, `.agent/*` / `.claude/*` (package
+  content). Reads are unrestricted except rule 1 secrets — the
+  helper reads plan/code/evidence to debug, it just cannot edit
+  them. Rule 1 (secrets + self-protection) and rule 2 (Bash) apply
+  unchanged to helper and scoper; rule 2b additionally denies
+  `server.sh stop` for helper/scoper — neither role owns a task
+  server, and server lifecycle belongs to the plane (a leaked
+  server is reported to the plane, not stopped by the helper).
+- **Local vs shared settings**: `.claude/settings.local.json` (and
+  any `*.local.json`) is a user-local override — helper-editable.
+  The shared `.claude/settings.json` (and `.agent/settings.json`)
+  is the guard — rule 1 blocks it for EVERY role, including the
+  helper. The distinction is exact-path matching in rule 1:
+  `settings.local.json` does not match the `settings.json` pattern,
+  so no rule 1 change was needed; only the helper allowlist
+  changed. Selftest proves the boundary both ways (helper allowed
+  `settings.local.json`, denied `settings.json`).
+- **KNOWN LIMIT — guardrail, not sandbox**: shell-redirection
+  writes (`> file`) are not intercepted — only Edit/Write tool
+  calls are. The helper (and scoper) roles are enforced at the
+  Edit/Write tool level. A helper that runs a patch script via Bash
+  bypasses the hook entirely; the 2026-11-16 migration fix did
+  exactly that (a python patch script). This is documented in the
+  hook header and here, and deliberately NOT fixed in v6.2 — the
+  Bash patterns are coarse substrings already, and closing this
+  would mean sandboxing the shell. The `/helper` command tells the
+  session not to route around a block with a Bash workaround.
+- **Init re-run now delivers missing template files too** (same
+  never-overwrite policy as skill dirs + command files; linux/mac
+  `init.sh` + Windows `init.ps1`) — otherwise a new template
+  (e.g. `intake.template.md`) would never reach an upgraded
+  install. The floor check requires `intake.template.md` beside
+  the script or in the live `_templates/`; a partial copy aborts
+  loudly (INIT-ABORTED) instead of installing without /grill
+  support. Fresh installs copy the whole `.agent/` dir as before;
+  the template sync source is the templates dir the floor check
+  found (beside the script when the package runs against a
+  separate live repo, else the live dir — then a no-op).
