@@ -515,7 +515,7 @@ bash "$BIN/init.sh" >/dev/null 2>&1
 # 35: /shutdown (v6.1) — plane-only command, marker denied to workers,
 # watcher/poller stop on the marker, release flow
 [ -f .agent/commands/shutdown.md ] && [ -f .claude/commands/shutdown.md ] \
-  && grep -q 'declare-role.sh plane' .agent/commands/shutdown.md \
+  && grep -q 'shutdown.sh' .agent/commands/shutdown.md \
   && ok "35 shutdown command present in the package and mapped to .claude/" \
   || bad "35 shutdown command missing from the package or the install"
 rm -f .claude/commands/shutdown.md
@@ -561,7 +561,7 @@ printf 'SHUTDOWN — operator shutdown\n' >> .history/2026-11-11-evalshutdown/in
 sed -i 's/EXECUTING/RELEASED/' .history/2026-11-11-evalshutdown/workers.md
 printf '2026-11-11 10:31 — shutdown: current step committed; B3 checkpoint: impl done through Foo, tests pending, resume at Bar\n2026-11-11 10:31 session end — shutdown\n' >> .history/2026-11-11-evalshutdown/worklog.md
 ! grep -qE '\| (EXECUTING|GRANTED) \|' .history/2026-11-11-evalshutdown/workers.md \
-  && ok "35g after the signal, no live claim rows remain (plane wait terminates)" \
+  && ok "35g after the signal, no live claim rows remain (worker obeyed)" \
   || bad "35g a live claim row survived the shutdown release"
 grep -q 'session end — shutdown' .history/2026-11-11-evalshutdown/worklog.md \
   && grep -q 'B3 checkpoint' .history/2026-11-11-evalshutdown/worklog.md \

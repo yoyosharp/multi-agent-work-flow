@@ -856,3 +856,32 @@ diffs the two copies (drift guard), plus unit cases: CLI native /
 script / node accepted; the Bash-tool wrapper, a hook-path shell and
 `tmux new -s claude` rejected. Windows `declare-role.ps1` now matches
 the exact image name `^claude(\.exe)?$`, not a substring.
+
+## v6.3.1 — faster boot/shutdown + auto-compact window (2026-11-20)
+
+- **boot.sh** (`.history/_bin/{linux,mac}/`, +x): plane boot in ONE call —
+  declare plane, clear spent shutdown markers, take `plane.lock` via
+  lock.sh (live/unverifiable lock refuses; never a takeover), start the
+  watcher, and print one sweep summary from a single `status.sh` call over
+  the live tasks (DONE/DELIVERED are counts, never expanded). The plane
+  keeps only the judgement: ratify, route BLOCKED, register its own
+  durable backstop wake, report. Instructions §1 rewritten to point at it.
+- **shutdown.sh** + rewritten `/shutdown`: **fire-and-forget**. Broadcast
+  (marker + inbox rows), direct pane nudges (send_wake copied from
+  plane-watch.sh, same pre-checks) so delivery no longer depends on the
+  watcher staying alive, `server.sh stop` only, watcher stop marker, pane
+  registry cleaned, lock released, still-live claims printed for the
+  human to close/kill. The v6.1 bounded wait (`SHUTDOWN_WAIT_SECS`, up to
+  30 min of per-minute model polls) is REMOVED: it verified nothing the
+  next boot's STALE sweep does not already cover.
+- **Auto-compact window**: package `settings.json` gains
+  `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW=150000` and nothing else — harness
+  auto-compact stays ON and fires on its own (~33k headroom, so around
+  117k used). Deliberately NOT shipped: `autoCompactEnabled: false` and
+  agent-side compaction rules (boundary checks, a 150k mid-phase stop) —
+  the user rejected them; an interruption costs more than the tokens,
+  85% of which are cache reads at ~2% of input price.
+- README title corrected (it still said v6.2).
+- Windows: boot.sh/shutdown.sh are bash-only (Windows has no watcher or
+  tmux); the settings.json window applies there too. Windows selftest
+  assertions updated statically, not executed.

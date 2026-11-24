@@ -1,1 +1,1 @@
-{"hooks":{"PreToolUse":[{"hooks":[{"command":"$CLAUDE_PROJECT_DIR/.claude/hooks/domain-guard.sh","type":"command"}],"matcher":"Edit|Write|Read|Bash"}],"Stop":[{"hooks":[{"command":"$CLAUDE_PROJECT_DIR/.claude/hooks/phase-done.sh","type":"command"}]}]}}
+{"hooks": {"PreToolUse": [{"hooks": [{"command": "$CLAUDE_PROJECT_DIR/.claude/hooks/domain-guard.sh", "type": "command"}], "matcher": "Edit|Write|Read|Bash"}], "Stop": [{"hooks": [{"command": "$CLAUDE_PROJECT_DIR/.claude/hooks/phase-done.sh", "type": "command"}]}]}, "env": {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "150000"}}

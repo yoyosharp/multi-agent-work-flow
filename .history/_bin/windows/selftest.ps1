@@ -210,7 +210,7 @@ else { "  ok: no stale §6 blocking-wait wording in pm.md" }
 "== /shutdown (v6.1): plane-only command, watcher/backstop stop, release flow"
 # Windows-run-only for the behavioral parts (no PowerShell host on the
 # build machine); the static assertions run wherever the file is read.
-if ((Test-Path (Join-Path $AgentDir 'commands\shutdown.md')) -and (Select-String -Path (Join-Path $AgentDir 'commands\shutdown.md') -Pattern 'WORKFLOW_ROLE=plane' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'commands\shutdown.md') -Pattern 'refuses' -Quiet)) { "  ok: shutdown command present with the plane-only role check" }
+if ((Test-Path (Join-Path $AgentDir 'commands\shutdown.md')) -and (Select-String -Path (Join-Path $AgentDir 'commands\shutdown.md') -Pattern 'shutdown.sh' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'commands\shutdown.md') -Pattern 'refuses' -Quiet)) { "  ok: shutdown command present with the plane-only role check" }
 else { "  SELFTEST-FAIL: shutdown command missing or lost the plane-only role check"; $fail = 1 }
 # the marker is plane-only by hook rule 3 (bash hook — no Windows port, so
 # the denial is proven by the linux/mac selftest, not here).
@@ -277,7 +277,10 @@ if ((Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern 
 else { "  SELFTEST-FAIL: hook missing the registry read / override / carve-out"; $fail = 1 }
 if ((Select-String -Path '.history\_bin\windows\init.ps1' -Pattern '_sessions' -Quiet) -and (Select-String -Path '.history\_bin\windows\init.ps1' -Pattern 'declare-role.ps1' -Quiet)) { "  ok: init.ps1 creates .history/_sessions/ and requires declare-role.ps1" }
 else { "  SELFTEST-FAIL: init.ps1 missing the _sessions dir or the declare-role floor check"; $fail = 1 }
-if ((Select-String -Path (Join-Path $AgentDir 'commands\shutdown.md') -Pattern 'declare-role.sh plane' -Quiet)) { "  ok: shutdown command relies on the declared plane role (no env var)" }
+if ((Select-String -Path (Join-Path $AgentDir 'commands\shutdown.md') -Pattern 'shutdown.sh' -Quiet)) { "  ok: shutdown command relies on the declared plane role (no env var)" }
+if ((Select-String -Path (Join-Path $AgentDir 'settings.json') -Pattern 'CLAUDE_CODE_AUTO_COMPACT_WINDOW' -Quiet) -and -not (Select-String -Path (Join-Path $AgentDir 'settings.json') -Pattern 'autoCompactEnabled' -Quiet)) { "  ok: settings.json sets the auto-compact window (150000) and leaves auto-compact enabled" }
+else { "  SELFTEST-FAIL: settings.json lost the auto-compact window or disables auto-compact"; $fail = 1 }
+
 else { "  SELFTEST-FAIL: shutdown.md lost the declared-role check"; $fail = 1 }
 Remove-Item -Recurse -Force $work
 Remove-Item -Recurse -Force $rg

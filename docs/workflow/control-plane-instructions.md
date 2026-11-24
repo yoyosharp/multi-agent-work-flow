@@ -18,22 +18,14 @@ task's initial qa.md questions). Never auto-grill.
 
 ## 1. Boot and recover the plane
 
-1. Declare your role first: `bash .history/_bin/<platform>/declare-role.sh plane` (no slug) — the hook reads the registry from it. Then acquire `.history/plane.lock`; fresher than `LOCK_STALE` → alert, stop without edits.
-   Stale-lock takeover requires verifying the recorded process (cwd/cmdline) — unverifiable identity → human escalation, never takeover.
+1. Boot in ONE call: `bash .history/_bin/<platform>/boot.sh` — it declares your role (plane), clears spent shutdown markers, takes `plane.lock` (a live or unverifiable lock REFUSES: escalate to the human, never take over), starts the watcher, and prints one sweep summary. Do not run these steps by hand.
 2. If `TASK_LIST.md` is absent, initialize via the `workflow-init` skill (`.agent/skills/workflow-init/SKILL.md`): pre-install floor check first, then `init.sh` — it creates the dirs/files, gitignores, pointer
    block, TASK_LIST seed, and api-config. Never rewrite adapted rules —
    the skill flags them for human migration.
-3. Sweep task ledgers: ratify/deny DECLARED claims immediately; assess active
-   rows by artifact liveness (commits and mtimes outrank pids); surface open
-   QA/review items.
+3. Act on boot.sh's summary (its sweep is ONE `status.sh` call over the live tasks — never re-read ledgers by hand, never call `status.sh` per task): ratify/deny DECLARED claims immediately; assess active rows by artifact liveness (commits and mtimes outrank pids); surface open QA/review items.
 4. Route declared states (`state:` lines via `status.sh`): answer every BLOCKED row within one poll cycle — to its `clearer` or cleared; carrying one
    silently is a plane failure; WAITING rows once older than `STALE_AFTER`; tally `kind:process` separately (workflow defects feed the retrospective).
-5. Clear spent shutdown markers first (`.history/SHUTDOWN.md`, `.history/._watcher_stop`) — a stale signal would stop workers that just booted. Start the event-driven wake: run `.history/_bin/<platform>/plane-watch.sh`
-   in the background (watches `.history/`, debounces 15 s, wakes you via tmux
-   only on a non-empty diff) and register a **durable** backstop wake every
-   30 min (`plane-poll.sh`, Windows: `plane-poll.ps1`) — the backstop also
-   restarts a dead watcher. Verify the watcher is alive (`.history/._watcher_state`)
-   and the backstop wake (CronList in Claude Code) before declaring boot complete.
+5. Register a **durable** backstop wake every 30 min (`plane-poll.sh`, Windows: `plane-poll.ps1`) — the backstop also restarts a dead watcher. Confirm it (CronList in Claude Code) before declaring boot complete; boot.sh already started and verified the watcher.
 6. Report active, planned, and blocked tasks.
 
 ## 2. Poll and deliver changes
@@ -94,7 +86,4 @@ is itself the command, fill + release, no `release` formula. Polls never auto-re
 
 ## 5. Stop the plane
 
-Write `released <timestamp>` to `.history/plane.lock` and delete your durable
-wake — the singleton must stay free for a future boot. For a coordinated shutdown of live workers, run `/shutdown` instead (command
-file `.agent/commands/shutdown.md`) — it broadcasts, waits bounded, stops
-servers and the watcher, then does this step.
+Run `/shutdown` (`.agent/commands/shutdown.md`) — it signals every live worker, stops servers and the watcher, releases `plane.lock` and prints the still-live claims; fire-and-forget, no waiting. Then delete your durable wake and end the session. A bare stop (no workers live) is the same command with no live claims.

@@ -328,6 +328,43 @@ r1=$(e2e "$(j_edit "$hr/0.scratch/note.md" "$hr")"); r2=$(e2e "$(j_edit "$hr/.hi
 [ "$r1" = 0 ] && [ "$r2" = 2 ] \
   && ok "end-to-end through a Bash-tool wrapper: declared helper gets helper rules (scratch 0, ledger 2)" \
   || bad "end-to-end through a Bash-tool wrapper: hook missed the registry (scratch=$r1 ledger=$r2)"
+
+echo "== boot.sh / shutdown.sh / compaction settings (v6.3.1)"
+[ -f "$bin/boot.sh" ] && [ -f "$bin/shutdown.sh" ] \
+  && ok "boot.sh and shutdown.sh present" || bad "boot.sh or shutdown.sh missing"
+! grep -q "autoCompactEnabled" "$AGENT_DIR/settings.json" \
+  && grep -q '"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "150000"' "$AGENT_DIR/settings.json" \
+  && ok "settings.json sets the auto-compact window (150000) and leaves auto-compact enabled" \
+  || bad "settings.json lost the compaction settings"
+grep -q "boot.sh" docs/workflow/control-plane-instructions.md \
+  && grep -q "shutdown.sh" "$AGENT_DIR/commands/shutdown.md" \
+  && ! grep -q "SHUTDOWN_WAIT_SECS" docs/workflow/control-plane-pm.md "$AGENT_DIR/commands/shutdown.md" \
+  && ok "docs route boot through boot.sh and shutdown through shutdown.sh (no wait loop)" \
+  || bad "docs still describe the step-by-step boot or the bounded shutdown wait"
+# fixture: boot declares plane, takes the lock, clears spent markers, sweeps
+broot="$PWD/$work/boot-root"; mkdir -p "$broot/.history/2026-11-11-demo" "$broot/.history/_bin" "$broot/.history/_templates" "$broot/.history/_shared"
+cp -r "$bin" "$broot/.history/_bin/linux"; cp -r .history/_templates/* "$broot/.history/_templates/" 2>/dev/null
+printf '### demo\n' > "$broot/.history/TASK_LIST.md"; touch "$broot/.history/SHUTDOWN.md" "$broot/.history/._watcher_stop"
+printf '%s\n' '| # | Worker | Host:Pid | Launched-by | Phase | Method | Commitment | Write domain | Resource tokens | Claimed-at | Status | Granted-at | Notes |' '|---|---|---|---|---|---|---|---|---|---|---|---|---|' '| 1 | w1 | h:1 | human | impl | - | - | wt | - | t | EXECUTING | t | - |' > "$broot/.history/2026-11-11-demo/workers.md"
+printf 'state: BLOCKED qa\n' > "$broot/.history/2026-11-11-demo/worklog.md"
+bout=$("$fakebin/claude" env WORKFLOW_ROOT="$broot" PLANE_WATCH_DISABLE=1 bash "$broot/.history/_bin/linux/boot.sh" "$broot" 2>&1)
+printf '%s' "$bout" | grep -q "lock taken" && [ ! -e "$broot/.history/SHUTDOWN.md" ] && [ ! -e "$broot/.history/._watcher_stop" ] \
+  && printf '%s' "$bout" | grep -q "EXECUTING" && printf '%s' "$bout" | grep -q "NEEDS-YOU" \
+  && ok "boot.sh declares plane, takes the lock, clears spent markers and sweeps live claims in one call" \
+  || bad "boot.sh fixture failed: $(printf '%s' "$bout" | tail -2)"
+# fixture: shutdown is fire-and-forget — signal + teardown, no waiting
+printf '# inbox\n' > "$broot/.history/2026-11-11-demo/inbox.md"
+sout=$("$fakebin/claude" env WORKFLOW_ROOT="$broot" bash -c 'bash "$1/declare-role.sh" plane >/dev/null; bash "$1/shutdown.sh" "$2" selftest' _ "$broot/.history/_bin/linux" "$broot" 2>&1)
+[ -f "$broot/.history/SHUTDOWN.md" ] && grep -q "SHUTDOWN — selftest" "$broot/.history/2026-11-11-demo/inbox.md" \
+  && [ -f "$broot/.history/._watcher_stop" ] && grep -q '^released' "$broot/.history/plane.lock" \
+  && printf '%s' "$sout" | grep -q "still live" \
+  && ok "shutdown.sh broadcasts, stops the watcher, releases the lock and lists still-live claims (no wait)" \
+  || bad "shutdown.sh fixture failed: $(printf '%s' "$sout" | tail -2)"
+# shutdown refuses from a declared worker session
+wout=$("$fakebin/claude" env WORKFLOW_ROOT="$broot" bash -c 'bash "$1/declare-role.sh" worker demo >/dev/null; bash "$1/shutdown.sh" "$2" x' _ "$broot/.history/_bin/linux" "$broot" 2>&1)
+printf '%s' "$wout" | grep -q "SHUTDOWN-REFUSED" \
+  && ok "shutdown.sh refuses when the session declared worker" \
+  || bad "shutdown.sh ran from a worker-declared session"
 # cleanup: kill the fake agent CLIs and their sleep children (no leak)
 for _fp in $fakepid $fakepid2; do
   for _c in $(pgrep -P "$_fp" 2>/dev/null); do kill "$_c" 2>/dev/null; done
@@ -1242,9 +1279,9 @@ echo "== /shutdown (v6.1): plane-only command, marker denied to workers, watcher
 [ -f "$AGENT_DIR/commands/shutdown.md" ] \
   && ok "shutdown command present under $AGENT_DIR/commands/" \
   || bad "shutdown command missing from $AGENT_DIR/commands/"
-grep -q "declare-role.sh plane" "$AGENT_DIR/commands/shutdown.md" \
-  && grep -q "refuses" "$AGENT_DIR/commands/shutdown.md" \
-  && grep -q "Workers never run \`/shutdown\`" "$AGENT_DIR/commands/shutdown.md" \
+grep -q "shutdown.sh" "$AGENT_DIR/commands/shutdown.md" \
+  && grep -q "refuses unless" "$AGENT_DIR/commands/shutdown.md" \
+  && grep -q "workers never run" "$AGENT_DIR/commands/shutdown.md" \
   && ok "shutdown command states the plane-only role check (refuses from a worker)" \
   || bad "shutdown command lost the plane-only role check"
 # the marker lives at .history/ root — outside any worker's task dir, so

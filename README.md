@@ -1,4 +1,4 @@
-# Set-up v6.2 — anchors-based control-plane / parallel-agents workflow
+# Set-up v6.3.1 — anchors-based control-plane / parallel-agents workflow
 
 **Self-contained**: everything needed ships inside this folder, whatever it
 is named. Copy its contents into any project root and the workflow runs —
