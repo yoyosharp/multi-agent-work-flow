@@ -67,6 +67,8 @@ else { Add-Degraded "tmux missing — event-driven wake (track A) unavailable; p
 Add-Degraded "no file-watcher tool on Windows yet (track A Windows variant pending); polling backstop only"
 if (Test-Path "$Root\.history\_bin\windows\server.ps1") { "  ok: server.ps1 present (server lifecycle available)" }
 else { Add-Degraded "server.ps1 missing — server lifecycle (track F) unavailable" }
+if ((Test-Path "$Root\.history\_bin\windows\declare-role.ps1") -or (Test-Path (Join-Path $PSScriptRoot "declare-role.ps1"))) { "  ok: declare-role.ps1 present (session-declared roles available)" }
+else { $hardFail = "declare-role.ps1 missing under $Root\.history\_bin\windows\ and beside the init script (incomplete package copy)" }
 
 # agent-config dir: the package ships .agent/; a Claude install maps it
 # to .claude/ (section 6 copies it). The smoke test reads whichever
@@ -120,13 +122,20 @@ if (($tplOk -ne "") -and ($tplOk -ne "$Root\.history\_templates")) {
   }
 }
 
+# --- declare-role sync (v6.3): a package run against a separate live repo
+# delivers a missing declare-role.ps1, never overwriting an existing one.
+if ((Test-Path (Join-Path $PSScriptRoot "declare-role.ps1")) -and (-not (Test-Path "$Root\.history\_bin\windows\declare-role.ps1"))) {
+  New-Item -ItemType Directory -Force -Path "$Root\.history\_bin\windows" | Out-Null
+  Copy-Item (Join-Path $PSScriptRoot "declare-role.ps1") "$Root\.history\_bin\windows\declare-role.ps1"; Add-Created ".history\_bin\windows\declare-role.ps1 (from package)"
+}
+
 # --- mode ------------------------------------------------------------------
 $mode = "fresh"
 if (Test-Path "$Root\.history\TASK_LIST.md") { $mode = "existing" }
 "== init ($mode) — $Root"
 
 # --- 1. dirs ----------------------------------------------------------------
-New-Item -ItemType Directory -Force -Path "$Root\.history","$Root\.worktree","$Root\.history\_bin","$Root\.history\_templates","$Root\.history\_pending" | Out-Null
+New-Item -ItemType Directory -Force -Path "$Root\.history","$Root\.worktree","$Root\.history\_bin","$Root\.history\_templates","$Root\.history\_pending","$Root\.history\_sessions" | Out-Null
 Add-Kept ".history/ + .worktree/ dirs present"
 
 # --- 2. gitignore: per-component sharing (v6 API-index track) ------------------

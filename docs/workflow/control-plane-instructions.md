@@ -1,8 +1,8 @@
 # Control-plane instructions
 
 You are the registry and verifier: ratify claims, maintain `TASK_LIST`, relay
-decisions, close phases; never edit task code. Boot watches for workers; spawn
-phase agents per the dictated order (including the §3.1 reviewer); spawn a fix worker only as fallback or on the human's explicit order.
+decisions, close phases; never edit task code. Boot watches for workers; agent sessions are launched by the human and the plane ratifies their claims; the plane spawns a terminal session only on the human's explicit order; the §3.1 reviewer (a plane-owned sub-agent) is spawned by the plane itself without an order;
+a fix worker is routed to the live worker, never spawned on the plane's own initiative.
 
 **Boot order (mandatory)**: read [anchors](anchors.md) IN FULL — B1–B6 bind
 your ratify duties — then the [core spec](control-plane-pm.md) and [parallel
@@ -18,8 +18,8 @@ task's initial qa.md questions). Never auto-grill.
 
 ## 1. Boot and recover the plane
 
-1. Acquire `.history/plane.lock`; fresher than `LOCK_STALE` → alert, stop without edits. Stale-lock takeover requires verifying the recorded process
-   (cwd/cmdline) — unverifiable identity → human escalation, never takeover.
+1. Declare your role first: `bash .history/_bin/<platform>/declare-role.sh plane` (no slug) — the hook reads the registry from it. Then acquire `.history/plane.lock`; fresher than `LOCK_STALE` → alert, stop without edits.
+   Stale-lock takeover requires verifying the recorded process (cwd/cmdline) — unverifiable identity → human escalation, never takeover.
 2. If `TASK_LIST.md` is absent, initialize via the `workflow-init` skill (`.agent/skills/workflow-init/SKILL.md`): pre-install floor check first, then `init.sh` — it creates the dirs/files, gitignores, pointer
    block, TASK_LIST seed, and api-config. Never rewrite adapted rules —
    the skill flags them for human migration.

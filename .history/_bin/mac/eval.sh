@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# eval.sh — 37-task eval suite (v6 track D + track E + track F + track G + track H + v6.0 mapping + v6.1 shutdown + v6.2 scoper/helper).
+# eval.sh — 37-task eval suite (v6 track D + track E + track F + track G + track H + v6.0 mapping + v6.1 shutdown + v6.2 scoper/helper + v6.3 registry).
 #
 # The gate that shows a v6 install behaves identically on a second project
 # or machine, instead of asserting it: it copies the package to a temp
-# project, installs it fresh (init.sh), and runs 37 scripted scenarios
+# project, installs it fresh (init.sh), and runs 39 scripted scenarios
 # against the INSTALLED copy — init, selftest, scaffold, tick, anchors,
 # ratify, risk, chain, watcher, Stop hook, backstop, templates, domain
 # guard, line cap, metrics row, API index (miss/hit/stale/merge-conflict/
@@ -12,13 +12,13 @@
 # counts), auto-refresh tag, watcher board regen, lock holder parsing
 # (malformed lock, stale takeover), shutdown (command, marker, watcher/poller
 # stop, release flow), scoper (skill, commands, template, §0 pointers, hook domain), helper
-# (allowlist/denylist). No live agent sessions are involved: the
+# (allowlist/denylist), registry (declare/enforce/fallback/stale). No live agent sessions are involved: the
 # scenarios exercise the deterministic machinery (scripts + templates +
 # docs) that the agents run on. A live agent's judgement is still the
 # plane's, not the eval's.
 #
 # Usage: eval.sh [package-root]   (default: the v6 tree this script ships in)
-# Exit 0 = EVAL-PASS (69/69); nonzero = EVAL-FAIL with the failing scenarios named.
+# Exit 0 = EVAL-PASS (78/78); nonzero = EVAL-FAIL with the failing scenarios named.
 # Windows eval is pending (no PowerShell host here); linux/mac only.
 set -u
 PKG="${1:-$(cd "$(dirname "$0")/../../.." && pwd -P)}"
@@ -505,7 +505,7 @@ bash "$BIN/init.sh" >/dev/null 2>&1
 # 35: /shutdown (v6.1) — plane-only command, marker denied to workers,
 # watcher/poller stop on the marker, release flow
 [ -f .agent/commands/shutdown.md ] && [ -f .claude/commands/shutdown.md ] \
-  && grep -q 'WORKFLOW_ROLE=plane' .agent/commands/shutdown.md \
+  && grep -q 'declare-role.sh plane' .agent/commands/shutdown.md \
   && ok "35 shutdown command present in the package and mapped to .claude/" \
   || bad "35 shutdown command missing from the package or the install"
 rm -f .claude/commands/shutdown.md
@@ -567,8 +567,8 @@ grep -q 'session end — shutdown' .history/2026-11-11-evalshutdown/worklog.md \
   || bad "36 scoper skill missing from the package or the install"
 [ -f .agent/commands/grill.md ] && [ -f .claude/commands/grill.md ] \
   && [ -f .agent/commands/helper.md ] && [ -f .claude/commands/helper.md ] \
-  && grep -q 'WORKFLOW_ROLE=scoper' .agent/commands/grill.md \
-  && grep -q 'WORKFLOW_ROLE=helper' .agent/commands/helper.md \
+  && grep -q 'declare-role.sh scoper' .agent/commands/grill.md \
+  && grep -q 'declare-role.sh helper' .agent/commands/helper.md \
   && ok "36b grill + helper commands present in the package and mapped to .claude/" \
   || bad "36b grill/helper commands missing from the package or the install"
 [ -f .history/_templates/intake.template.md ] && [ -d .history/_pending ] \
@@ -607,6 +607,63 @@ hprobe() { # hprobe <file-path> <role> — hook exit code (0 allow, 2 deny)
   && ok "37b helper denylist: plan, TASK_LIST, api-index, _pending, shared settings.json all denied" \
   || bad "37b helper denylist allowed a denied path"
 
-echo "== EVAL: $pass passed, $fail failed (of $((pass+fail)) checks across 37 scenarios)"
+
+# 38: session-declared roles (v6.3) — declare + enforce (registry beats cwd)
+[ -f "$BIN/declare-role.sh" ] && [ -d .history/_sessions ] \
+  && diff -q .history/_bin/linux/declare-role.sh .history/_bin/mac/declare-role.sh >/dev/null 2>&1 \
+  && ok "38 declare-role.sh present (linux==mac) and init created .history/_sessions/" \
+  || bad "38 declare-role.sh missing, linux/mac differ, or _sessions/ not created"
+# fixture task dir + worktree for the registry worker (claim-row domain src/test/**)
+mkdir -p .history/2026-11-11-evalreg .worktree/evalreg/src/test .worktree/evalreg/src/main
+printf '%s\n' \
+  '| # | Worker | Host:Pid | Launched-by | Phase | Method | Commitment | Write domain | Resource tokens | Claimed-at | Status | Granted-at | Notes |' \
+  '|---|---|---|---|---|---|---|---|---|---|---|---|---|' \
+  '| 1 | w1 | host:1 | human | impl | md | c1 | src/test/** | manual-test | 2026-11-11 10:00 | EXECUTING | 2026-11-11 10:01 | |' \
+  > .history/2026-11-11-evalreg/workers.md
+# fake agent CLI (script named `claude`, runs its args as a child, then sleeps)
+mkdir -p "$EVAL_ROOT/fakebin-claude"
+printf '#!/bin/sh\n"$@"\nsleep 30\n' > "$EVAL_ROOT/fakebin-claude/claude"; chmod +x "$EVAL_ROOT/fakebin-claude/claude"
+"$EVAL_ROOT/fakebin-claude/claude" > "$EVAL_ROOT/fake-claude.log" 2>&1 &
+regpid=$!
+sleep 1
+WORKFLOW_ROOT="$PROJ" DECLARE_ROLE_PID="$regpid" bash "$BIN/declare-role.sh" worker evalreg >/dev/null 2>&1
+[ -f ".history/_sessions/$regpid" ] \
+  && grep -qx 'role=worker' ".history/_sessions/$regpid" \
+  && grep -qx 'slug=evalreg' ".history/_sessions/$regpid" \
+  && ok "38b declare-role.sh writes role=worker slug=evalreg for the injected pid" \
+  || bad "38b declare-role.sh did not write the registry entry"
+reghook() { # reghook <pid> <file> <cwd> — hook exit code with HOOK_AGENT_PID, no role env vars
+  printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"},"cwd":"%s"}' "$2" "$3" \
+    | env -u WORKFLOW_ROLE -u WORKFLOW_SLUG -u WF_ROLE -u WF_SLUG WORKFLOW_ROOT="$PROJ" HOOK_AGENT_PID="$1" bash .claude/hooks/domain-guard.sh >/dev/null 2>&1; echo $?
+}
+[ "$(reghook "$regpid" "$PROJ/.worktree/evalreg/src/test/FooTest.java" "$PROJ")" = 0 ] \
+  && ok "38c hook allows a registry worker's in-domain edit from the project root (role independent of cwd)" \
+  || bad "38c hook blocked a registry worker's in-domain edit from the root"
+[ "$(reghook "$regpid" "$PROJ/.worktree/evalreg/src/main/App.java" "$PROJ")" = 2 ] \
+  && ok "38d hook denies a registry worker's out-of-domain edit (claim-row tokens)" \
+  || bad "38d hook allowed a registry worker outside the claim-row domain"
+[ "$(reghook "$regpid" "$PROJ/.history/_sessions/$regpid" "$PROJ")" = 0 ] \
+  && [ "$(reghook "$regpid" "$PROJ/.history/_sessions/999999" "$PROJ")" = 2 ] \
+  && ok "38e hook allows a session's own registry file and denies another pid's" \
+  || bad "38e registry carve-out wrong (own file blocked or another pid's allowed)"
+
+# 39: registry fallback + stale entry
+true & deadpid=$!; wait $deadpid 2>/dev/null
+[ "$(reghook "$deadpid" "$PROJ/.worktree/evalreg/src/test/FooTest.java" "$PROJ/.worktree/evalreg")" = 0 ] \
+  && ok "39 hook falls back to cwd derivation (worker in worktree) with no registry entry" \
+  || bad "39 hook did not fall back to the worktree cwd"
+[ "$(reghook "$deadpid" "$PROJ/.history/TASK_LIST.md" "$PROJ")" = 0 ] \
+  && [ "$(reghook "$deadpid" "$PROJ/.worktree/evalreg/src/test/FooTest.java" "$PROJ")" = 2 ] \
+  && ok "39b hook falls back to plane in the project root with no registry entry" \
+  || bad "39b hook did not fall back to plane in the project root"
+printf 'role=worker\nslug=evalreg\n' > ".history/_sessions/$deadpid"
+[ "$(reghook "$deadpid" "$PROJ/.worktree/evalreg/src/test/FooTest.java" "$PROJ")" = 2 ] \
+  && ok "39c hook ignores a registry entry for a dead pid (stale) and falls back to cwd" \
+  || bad "39c hook honoured a stale registry entry"
+# cleanup: kill the fake agent CLI and its sleep child (no leak)
+for _c in $(pgrep -P "$regpid" 2>/dev/null); do kill "$_c" 2>/dev/null; done
+kill "$regpid" 2>/dev/null
+
+echo "== EVAL: $pass passed, $fail failed (of $((pass+fail)) checks across 39 scenarios)"
 [ "$fail" -eq 0 ] && { echo "EVAL-PASS: every scenario demonstrated"; exit 0; }
 echo "EVAL-FAIL: $fail check(s) unproven"; exit 1

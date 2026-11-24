@@ -4,7 +4,7 @@ Companion to `control-plane-pm.md`. Applies when ≥2 workers may run concurrent
 
 ## 1. Roles
 
-- **Worker (PM)**: an AI coding-agent session (any harness) or a human operator, executing one phase of one task. Two equal launch paths: plane-spawned, or human-launched on any terminal (cwd = the task's worktree, or the main checkout for read-only work). Both are first-class executors.
+- **Worker (PM)**: an AI coding-agent session (any harness) or a human operator, executing one phase of one task. Launched by the human on any terminal (cwd = the task's worktree, or the main checkout for read-only work); the plane spawns a terminal session only on the human's explicit order. Both are first-class executors.
 - **Control plane**: registry + verifier — ratifies claims, curates TASK_LIST, polls durable artifacts, and verifies finished work; never executes phases. It need not be alive for a worker to launch, but no execution happens without its grant (§3).
 
 ## 2. Parallelism rule
@@ -38,7 +38,7 @@ Base case: holder heartbeat fresh + challenger → auto-DENY (reason names holde
 
 Executors are bound only through on-disk artifacts and process behavior (§3 ledger, appends, commits, liveness) — never harness APIs. Any substrate that can read/write files, run builds, and be identified by host:pid qualifies.
 
-- Workers are terminal sessions (any harness), plane-spawned or human-launched; they outlive the plane session. **Probe gate** (plane-spawned only): trust a spawn channel after a trivial round-trip (`echo probe-ok`); failure → the harness's in-process sub-agent mechanism as fallback. Human-launched sessions are trusted by the human directly.
+- Workers are terminal sessions (any harness), human-launched, or plane-spawned only on the human's explicit order; they outlive the plane session. **Probe gate** (plane-spawned only): trust a spawn channel after a trivial round-trip (`echo probe-ok`); failure → the harness's in-process sub-agent mechanism as fallback. Human-launched sessions are trusted by the human directly.
 - Environment respect (binding, same as core spec): inherit the plane's model/provider config (never pass overrides), cwd = worktree/main checkout, the project's permission allowlist, no config/settings mutation from child sessions, no tokens unless granted. In-process sub-agents are demoted to probe-fallback + sub-agents workers spawn inside their own sessions.
 - Typing into a live worker's terminal is fine; substantive decisions landing that way are mirrored by the worker into worklog/qa.md — artifacts are the single source of truth, terminals disposable. A human may execute a phase as a worker under the same rules (identity column records who/what runs it).
 

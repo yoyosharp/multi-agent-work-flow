@@ -111,6 +111,14 @@ command -v "$WATCH_TOOL" >/dev/null 2>&1 \
 [ -f "$ROOT/.history/_bin/$PLATFORM/server.sh" ] \
   && echo "  ok: server.sh present (server lifecycle available)" \
   || note_degraded "server.sh missing — server lifecycle (track F) unavailable; manual-test workers cannot stop their server"
+# declare-role.sh (v6.3): required — sessions declare their role through it.
+# The live _bin/ copy or the package dir beside this script must hold it;
+# a missing script aborts loudly (the role registry cannot work without it).
+if [ -f "$ROOT/.history/_bin/$PLATFORM/declare-role.sh" ] || [ -f "$BIN/declare-role.sh" ]; then
+  echo "  ok: declare-role.sh present (session-declared roles available)"
+else
+  hard_fail="declare-role.sh missing under $ROOT/.history/_bin/$PLATFORM/ and beside the init script (incomplete package copy)"
+fi
 
 # agent-config dir: the package ships .agent/; a Claude install maps it
 # to .claude/ (section 6 copies it). The smoke test reads whichever
@@ -170,13 +178,24 @@ if [ -n "$TPL_OK" ] && [ "$TPL_OK" != "$ROOT/.history/_templates" ]; then
   done
 fi
 
+# --- declare-role sync (v6.3): a package run against a separate live repo
+# delivers a missing declare-role.sh, never overwriting an existing one.
+# When this script runs from the live _bin/ itself this is a no-op (the
+# script is its own source); the floor check above already aborted if it
+# is missing from every source.
+if [ -f "$BIN/declare-role.sh" ] && [ ! -f "$ROOT/.history/_bin/$PLATFORM/declare-role.sh" ]; then
+  mkdir -p "$ROOT/.history/_bin/$PLATFORM"
+  cp "$BIN/declare-role.sh" "$ROOT/.history/_bin/$PLATFORM/declare-role.sh" \
+    && note_created ".history/_bin/$PLATFORM/declare-role.sh (from package)"
+fi
+
 # --- mode ----------------------------------------------------------------
 MODE="fresh"
 [ -f "$ROOT/.history/TASK_LIST.md" ] && MODE="existing"
 echo "== init ($MODE) — $ROOT"
 
 # --- 1. dirs ---------------------------------------------------------------
-mkdir -p "$ROOT/.history" "$ROOT/.worktree" "$ROOT/.history/_bin" "$ROOT/.history/_templates" "$ROOT/.history/_pending"
+mkdir -p "$ROOT/.history" "$ROOT/.worktree" "$ROOT/.history/_bin" "$ROOT/.history/_templates" "$ROOT/.history/_pending" "$ROOT/.history/_sessions"
 note_kept ".history/ + .worktree/ dirs present"
 # scripts ship non-executable in the package (zip loses +x), so status.sh /
 # plane-poll.sh fail calling siblings directly on a fresh extract — make

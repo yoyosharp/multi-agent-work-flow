@@ -14,12 +14,13 @@ covered, surface it to the human instead of inventing policy.
 
 ## 1. Role check — refuse unless you are the control plane
 
-You are the plane iff `WORKFLOW_ROLE=plane`, or this session holds
-`.history/plane.lock`, or your cwd is the project root (not under
-`.worktree/`). A worker (`WORKFLOW_ROLE=worker`, or cwd under
-`.worktree/<slug>`) refuses and tells the human to run `/shutdown` in the
-control-plane session. Workers never run `/shutdown`; they only obey the
-signal (worker-instructions.md §3).
+You are the plane iff you declared `plane` at boot
+(`declare-role.sh plane` — the registry entry is the authority), or
+this session holds `.history/plane.lock`, or your cwd is the project
+root (not under `.worktree/`). A worker (declared `worker`, or cwd
+under `.worktree/<slug>`) refuses and tells the human to run
+`/shutdown` in the control-plane session. Workers never run `/shutdown`;
+they only obey the signal (worker-instructions.md §3).
 
 ## 2. Broadcast — stop chartering, write the signal
 

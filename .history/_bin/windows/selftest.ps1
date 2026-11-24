@@ -256,16 +256,29 @@ else { "  SELFTEST-FAIL: shutdown release is missing checkpoint, session-end log
 # allow/deny behavior is proven by the linux/mac selftest, not here.
 if ((Test-Path (Join-Path $AgentDir 'skills\requirements-grill\SKILL.md')) -and (Select-String -Path (Join-Path $AgentDir 'skills\requirements-grill\SKILL.md') -Pattern 'grill-me' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'skills\requirements-grill\SKILL.md') -Pattern 'Phase 0' -Quiet)) { "  ok: requirements-grill skill present with attribution + Phase 0" }
 else { "  SELFTEST-FAIL: requirements-grill skill missing or lost attribution/Phase 0"; $fail = 1 }
-if ((Test-Path (Join-Path $AgentDir 'commands\grill.md')) -and (Select-String -Path (Join-Path $AgentDir 'commands\grill.md') -Pattern 'WORKFLOW_ROLE=scoper' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'commands\grill.md') -Pattern 'disable-model-invocation: true' -Quiet)) { "  ok: grill command present, user-invoked only, refuses without WORKFLOW_ROLE=scoper" }
-else { "  SELFTEST-FAIL: grill command missing or lost the role check"; $fail = 1 }
-if ((Test-Path (Join-Path $AgentDir 'commands\helper.md')) -and (Select-String -Path (Join-Path $AgentDir 'commands\helper.md') -Pattern 'WORKFLOW_ROLE=helper' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'commands\helper.md') -Pattern 'Never edit' -Quiet)) { "  ok: helper command present, user-invoked only, states the never-edit list" }
-else { "  SELFTEST-FAIL: helper command missing or lost the role check/brief"; $fail = 1 }
+if ((Test-Path (Join-Path $AgentDir 'commands\grill.md')) -and (Select-String -Path (Join-Path $AgentDir 'commands\grill.md') -Pattern 'declare-role.sh scoper' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'commands\grill.md') -Pattern 'disable-model-invocation: true' -Quiet)) { "  ok: grill command present, user-invoked only, declares the scoper role (no env var)" }
+else { "  SELFTEST-FAIL: grill command missing or lost the declare-role step"; $fail = 1 }
+if ((Test-Path (Join-Path $AgentDir 'commands\helper.md')) -and (Select-String -Path (Join-Path $AgentDir 'commands\helper.md') -Pattern 'declare-role.sh helper' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'commands\helper.md') -Pattern 'Never edit' -Quiet)) { "  ok: helper command present, user-invoked only, declares the helper role (no env var)" }
+else { "  SELFTEST-FAIL: helper command missing or lost the declare-role step/brief"; $fail = 1 }
 if ((Test-Path '.history\_templates\intake.template.md') -and (Select-String -Path '.history\_templates\intake.template.md' -Pattern 'Checkable acceptance scope' -Quiet) -and (Select-String -Path '.history\_templates\intake.template.md' -Pattern 'Proposed slug' -Quiet)) { "  ok: intake template present with the required sections" }
 else { "  SELFTEST-FAIL: intake template missing or incomplete"; $fail = 1 }
 if ((Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern '§0 pre-intake' -Quiet) -and (Select-String -Path 'docs\workflow\control-plane-instructions.md' -Pattern 'Pre-intake \(scoper\)' -Quiet)) { "  ok: pm.md + instructions.md carry the §0 pointers" }
 else { "  SELFTEST-FAIL: §0 pointers missing from the plane docs"; $fail = 1 }
 if ((Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern 'helper may edit only scripts under .history/_bin/' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern 'helper/scoper may not stop servers' -Quiet)) { "  ok: helper _bin scripts-only + helper/scoper server-stop deny present in hook" }
 else { "  SELFTEST-FAIL: hook missing the helper _bin scripts-only or server-stop deny"; $fail = 1 }
+"== session-declared roles (v6.3): registry + declare-role (static only)"
+# Static assertions only — the hook is bash, no Windows port, so the
+# registry allow/deny behavior is proven by the linux/mac selftest, not here.
+if ((Test-Path '.history\_bin\windows\declare-role.ps1') -and (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern 'role=' -Quiet) -and (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern 'slug=' -Quiet) -and (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern 'Get-CimInstance Win32_Process' -Quiet) -and (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern 'ParentProcessId' -Quiet)) { "  ok: declare-role.ps1 present with the registry format + CIM parent-chain walk-up" }
+else { "  SELFTEST-FAIL: declare-role.ps1 missing or lost the registry format / walk-up"; $fail = 1 }
+if (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern "match '\^claude" -Quiet) { "  ok: declare-role.ps1 matches the exact agent image name, not a substring" }
+else { "  SELFTEST-FAIL: declare-role.ps1 matches 'claude' as a substring (wrapper processes would be registered)"; $fail = 1 }
+if ((Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern '_sessions' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern 'HOOK_AGENT_PID' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern 'find_agent_pid' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern 'registry files are per-session' -Quiet)) { "  ok: hook reads the registry first (HOOK_AGENT_PID override, per-session carve-out)" }
+else { "  SELFTEST-FAIL: hook missing the registry read / override / carve-out"; $fail = 1 }
+if ((Select-String -Path '.history\_bin\windows\init.ps1' -Pattern '_sessions' -Quiet) -and (Select-String -Path '.history\_bin\windows\init.ps1' -Pattern 'declare-role.ps1' -Quiet)) { "  ok: init.ps1 creates .history/_sessions/ and requires declare-role.ps1" }
+else { "  SELFTEST-FAIL: init.ps1 missing the _sessions dir or the declare-role floor check"; $fail = 1 }
+if ((Select-String -Path (Join-Path $AgentDir 'commands\shutdown.md') -Pattern 'declare-role.sh plane' -Quiet)) { "  ok: shutdown command relies on the declared plane role (no env var)" }
+else { "  SELFTEST-FAIL: shutdown.md lost the declared-role check"; $fail = 1 }
 Remove-Item -Recurse -Force $work
 Remove-Item -Recurse -Force $rg
 if ($fail -eq 0) { "SELFTEST-PASS: every gate demonstrated failing and passing"; exit 0 }

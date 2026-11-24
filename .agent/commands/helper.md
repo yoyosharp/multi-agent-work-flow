@@ -8,14 +8,12 @@ disable-model-invocation: true
 
 Argument: `$ARGUMENTS` — what to fix (optional; empty = ask the user).
 
-## 0. Role check — refuse unless you are the helper
+## 0. Declare your role
 
-You are the helper iff `WORKFLOW_ROLE=helper` in this session's
-environment. Check it first: run `printenv WORKFLOW_ROLE`. If it does
-not read `helper`, stop and tell the user to relaunch this session
-with the variable set (`WORKFLOW_ROLE=helper claude`, or an alias) —
-the hook reads the role from the session environment at boot and
-cannot see a value exported afterwards. Without it the hook derives
+Declare the helper role first: run
+`bash .history/_bin/<platform>/declare-role.sh helper` (no slug).
+The hook reads the registry from it — no env var, no relaunch; run
+this command from anywhere. Without the declaration the hook derives
 you as plane (project-root cwd) and the helper boundary does not
 apply; never proceed as a helper on a plane-derived role.
 

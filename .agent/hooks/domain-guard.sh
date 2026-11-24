@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# domain-guard.sh — PreToolUse hook for v6.2 (domain enforcement + deny rules).
+# domain-guard.sh — PreToolUse hook for v6.3 (domain enforcement + deny rules).
 #
 # Contract: the agent CLI runs this before every matched tool call
 # (matcher: Edit|Write|Read|Bash, wired in the agent-config settings — .agent/settings.json pre-adoption, .claude/settings.json on Claude Code).
@@ -53,26 +53,32 @@
 #      path tokens fall back to rule 3; the plane still ratifies the
 #      free-text domain at CLOSE (anchor B2).
 #
-# Role/slug: WORKFLOW_ROLE=plane|worker|scoper|helper and
-# WORKFLOW_SLUG=<slug>, set by the spawn wrapper (or, for a user-invoked
-# /grill or /helper session, by the user at session start — the hook reads
-# the role from the session environment and cannot see a value exported
-# afterwards). WF_ROLE/WF_SLUG are accepted as fallback aliases
-# (live-install names from the 2026-11-11 hook probe; canonical is
-# WORKFLOW_*). Otherwise derived from cwd: under
-# .worktree/<slug> -> worker with that slug; anything else -> plane.
-# CWD cannot distinguish helper from plane (both run in the main
-# checkout), so the env var is the ONLY signal for helper — and for
-# scoper, which also runs in the project root. The unclaimed=plane
-# default is deliberate and unchanged: an unset role is a plane, never
-# a helper or scoper (a session that never asked for a narrow domain
-# must not silently gain one — and must not silently lose the plane's).
+# Role/slug (v6.3 — session-declared): the session declares its role by
+# running declare-role.sh <role> [slug] (`.history/_bin/<platform>/`,
+# Windows: declare-role.ps1), which writes `.history/_sessions/<pid>`
+# (two lines: `role=<role>`, and for worker `slug=<slug>`), where <pid>
+# is the agent CLI process pid. Precedence: registry first, then the
+# WORKFLOW_ROLE/WORKFLOW_SLUG env vars (WF_ROLE/WF_SLUG fallback
+# aliases — live-install names from the 2026-11-11 hook probe; canonical
+# is WORKFLOW_*), then cwd derivation (under `.worktree/<slug>` ->
+# worker with that slug; anything else -> plane). A registry entry is
+# used only if the pid is a live agent process (kill -0 + is_agent_cmd:
+# argv0 basename `claude`, or sh/bash/dash/zsh/node + argv1 basename
+# `claude`); a stale entry (dead pid, or a pid that is no
+# longer the agent CLI) is ignored — the hook never deletes entries.
+# The registry is per-session: a session writes only its own pid's file
+# (declare-role.sh enforces this; the hook's rule 3 carve-out allows a
+# session to write exactly its own `.history/_sessions/<pid>` file and
+# denies any other pid's). The unclaimed=plane default is deliberate
+# and unchanged: an unset role is a plane, never a helper or scoper
+# (a session that never asked for a narrow domain must not silently
+# gain one — and must not silently lose the plane's).
 # A worker with no determinable slug is denied Edit/Write with a message
-# telling it to set WORKFLOW_SLUG or run from the task worktree.
+# telling it to run declare-role.sh worker <slug> or run from the task worktree.
 # WORKFLOW_ROOT overrides the project root (test-only; default: the repo
 # this script ships in, resolved from the script's own location).
 #
-# Known limits (v6.2): shell-redirection writes (`> file`) are not
+# Known limits (v6.3): shell-redirection writes (`> file`) are not
 # intercepted — only Edit/Write tool calls are. That bounds the helper
 # (and scoper) roles: they are enforced at the Edit/Write tool level —
 # a guardrail + audit signal, not a sandbox. A helper that runs a patch
@@ -80,7 +86,12 @@
 # 2026-11-16 migration fix used) bypasses the hook entirely; the
 # migration's live fix did exactly that. Do not try to close this in
 # the hook — the Bash patterns are coarse substrings already (an
-# `echo "rm -rf"` is blocked too). Windows port pending (bash only,
+# `echo "rm -rf"` is blocked too). The registry has the same limit: a
+# session that writes `.history/_sessions/<pid>` by hand (shell
+# redirection) could forge another session's entry — declare-role.sh
+# only ever writes its own pid, and the hook's carve-out denies an
+# Edit/Write to another pid's file, but a deliberate hand-write is
+# outside the hook's reach. Windows port pending (bash only,
 # linux/mac).
 #
 # (v6 track F): the kill gate verifies via /proc (Linux) or ps/lsof
@@ -176,9 +187,11 @@ resolve_taskdir() { # resolve_taskdir <slug> -> task dir or nothing.
   [ -n "$best" ] && printf '%s' "$best"
 }
 proc_cmdline() { # proc_cmdline <pid> -> live cmdline (single line) or empty
+  case "${1:-}" in ''|0) return 0 ;; esac
   if [ "$(uname -s)" = "Darwin" ]; then
     ps -o command= -p "$1" 2>/dev/null | head -1
   else
+    [ -r "/proc/$1/cmdline" ] || return 0
     tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null
   fi
 }
@@ -190,6 +203,52 @@ proc_cwd() { # proc_cwd <pid> -> live cwd or empty
   else
     readlink "/proc/$1/cwd" 2>/dev/null
   fi
+}
+# find_agent_pid — walk up from $$ to the agent CLI process
+# (is_agent_cmd). HOOK_AGENT_PID overrides (selftest). Prints the pid
+# or nothing. The agent CLI spawns the hook as a (grand)child, so the
+# walk finds it; a wrapper shell in between is skipped, not matched.
+# If no ancestor matches, the hook falls back to env var, then cwd.
+# >>> agent-cmd matcher (keep identical in domain-guard.sh + declare-role.sh; selftest diffs them)
+# is_agent_cmd "<cmdline>" — true iff the cmdline is the agent CLI itself:
+#   argv0 basename = claude                       (native binary, any path)
+#   sh|bash|dash|zsh|node + argv1 basename claude (scripted / npm-node launchers)
+# A plain substring match on "claude" is NOT enough: Claude Code's Bash-tool
+# wrapper carries `.claude/shell-snapshots/...` in its cmdline and dies with
+# the tool call, so matching it registers a pid that is stale by the next
+# call (found live 2026-11-19, v6.3 migration).
+is_agent_cmd() {
+  local cmd="$1" first rest arg1
+  first="${cmd%% *}"; first="${first##*/}"
+  [ "$first" = "claude" ] && return 0
+  case "$first" in
+    sh|bash|dash|zsh|node)
+      rest="${cmd#* }"; [ "$rest" = "$cmd" ] && return 1
+      arg1="${rest%% *}"; arg1="${arg1##*/}"
+      [ "$arg1" = "claude" ] && return 0 ;;
+  esac
+  return 1
+}
+# <<< agent-cmd matcher
+find_agent_pid() {
+  if [ -n "${HOOK_AGENT_PID:-}" ]; then printf '%s' "$HOOK_AGENT_PID"; return 0; fi
+  local p="$$" pp cmd
+  while [ -n "$p" ] && [ "$p" != "0" ] && [ "$p" != "1" ]; do
+    pp=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+    [ -z "$pp" ] && return 0
+    cmd=$(proc_cmdline "$pp")
+    is_agent_cmd "$cmd" && { printf '%s' "$pp"; return 0; }
+    p="$pp"
+  done
+  return 0
+}
+# agent_pid_alive <pid> — true iff the pid is alive AND it is still the
+# agent CLI (is_agent_cmd — not a reused pid, not a dead tool wrapper).
+agent_pid_alive() {
+  local pid="$1"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  is_agent_cmd "$(proc_cmdline "$pid")"
 }
 pid_holds_port() { # pid_holds_port <pid> <port> -> 0 holds, 1 not, 2 unavailable
   local pid="$1" port="$2"
@@ -250,8 +309,24 @@ verify_server_pid() {
 ROOT="${WORKFLOW_ROOT:-$(cd "$(dirname "$0")/../.." && pwd -P)}"
 
 # --- role / slug --------------------------------------------------------
-ROLE="${WORKFLOW_ROLE:-${WF_ROLE:-}}"
-SLUG="${WORKFLOW_SLUG:-${WF_SLUG:-}}"
+# Precedence: registry (.history/_sessions/<agent-pid>) > env var
+# (WORKFLOW_ROLE/WORKFLOW_SLUG, WF_* aliases) > cwd derivation.
+ROLE=""; SLUG=""
+AGENT_PID="$(find_agent_pid)"
+if [ -n "$AGENT_PID" ]; then
+  REG="$ROOT/.history/_sessions/$AGENT_PID"
+  if [ -f "$REG" ] && agent_pid_alive "$AGENT_PID"; then
+    ROLE=$(grep -E '^role=' "$REG" 2>/dev/null | tail -1 | sed 's/^role=//')
+    SLUG=$(grep -E '^slug=' "$REG" 2>/dev/null | tail -1 | sed 's/^slug=//')
+    case "$ROLE" in plane|worker|scoper|helper) ;; *) ROLE=""; SLUG="" ;; esac
+  fi
+  # stale registry entry (dead pid / not the agent CLI / bad role):
+  # ignored — fall through to env var, then cwd. Never deleted here.
+fi
+if [ -z "$ROLE" ]; then
+  ROLE="${WORKFLOW_ROLE:-${WF_ROLE:-}}"
+  SLUG="${WORKFLOW_SLUG:-${WF_SLUG:-}}"
+fi
 if [ -z "$ROLE" ]; then
   case "${CWD}" in
     "$ROOT"/.worktree/*)
@@ -394,6 +469,19 @@ if [ "$TOOL" = "Edit" ] || [ "$TOOL" = "Write" ]; then
   # (A helper writing its own memory under ~/.claude/projects/ is not a
   # plane write. Rule 1 secrets above still apply.)
   under "$APATH" "$ROOT" || exit 0
+  # Registry carve-out (v6.3): a session may write exactly its own
+  # registry file (.history/_sessions/<own-agent-pid>) — that is how a
+  # session declares its role even when its fallback role would not
+  # allow writing under .history/ (e.g. a worker in a worktree). Any
+  # other pid's file is denied: a session must never write another
+  # session's role. AGENT_PID is empty when no agent CLI was found —
+  # then no registry file is writable through this carve-out.
+  if under "$APATH" "$ROOT/.history/_sessions"; then
+    if [ -n "${AGENT_PID:-}" ] && [ "$APATH" = "$ROOT/.history/_sessions/$AGENT_PID" ]; then
+      exit 0
+    fi
+    deny "registry files are per-session — you may write only your own .history/_sessions/<agent-pid> (yours: ${AGENT_PID:-<none>}): $FPATH"
+  fi
   if [ "$ROLE" = "plane" ]; then
     under "$APATH" "$ROOT/.history" || deny "plane may write only under .history/: $FPATH"
   elif [ "$ROLE" = "scoper" ]; then
@@ -416,7 +504,7 @@ if [ "$TOOL" = "Edit" ] || [ "$TOOL" = "Write" ]; then
       esac
     fi
   else
-    [ -n "$SLUG" ] || deny "no task slug: set WORKFLOW_SLUG or run from the task worktree"
+    [ -n "$SLUG" ] || deny "no task slug: run declare-role.sh worker <slug> or run from the task worktree"
     WT="$ROOT/.worktree/$SLUG"
     if under "$APATH" "$WT"; then
       # claim-row path tokens, best effort (rule 4)

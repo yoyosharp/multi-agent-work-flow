@@ -8,14 +8,12 @@ disable-model-invocation: true
 
 Argument: `$ARGUMENTS` — the rough idea to scope.
 
-## 0. Role check — refuse unless you are the scoper
+## 0. Declare your role
 
-You are the scoper iff `WORKFLOW_ROLE=scoper` in this session's
-environment. Check it first: run `printenv WORKFLOW_ROLE`. If it does
-not read `scoper`, stop and tell the user to relaunch this session
-with the variable set (`WORKFLOW_ROLE=scoper claude`, or an alias) —
-the hook reads the role from the session environment at boot and
-cannot see a value exported afterwards. Without it the hook derives
+Declare the scoper role first: run
+`bash .history/_bin/<platform>/declare-role.sh scoper` (no slug).
+The hook reads the registry from it — no env var, no relaunch; run
+this command from anywhere. Without the declaration the hook derives
 you as plane (project-root cwd) and you could write anywhere under
 `.history/`; never proceed as a scoper on a plane-derived role.
 

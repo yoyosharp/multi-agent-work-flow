@@ -64,10 +64,13 @@ line-count check enforces the cap.
   only under `.history/`, the scoper only under `.history/_pending/`,
   the helper only its allowlist (`.history/_bin/`, `0.scratch/`, memory
   files, `*.local.json`); secrets and destructive shell blocked for every
-  role (see `control-plane-pm.md` §2, "PreToolUse hook"). The hook reads
-  the role from `WORKFLOW_ROLE` (env var is the only signal for scoper /
-  helper — both run in the project root, where cwd would derive plane);
-  the unclaimed=plane default is unchanged.
+  role (see `control-plane-pm.md` §2, "PreToolUse hook"). The session
+  declares its role via `declare-role.sh` (registry
+  `.history/_sessions/<pid>`); the hook reads the registry first, then
+  the `WORKFLOW_ROLE` env var (backwards compatibility), then derives
+  from cwd. No env var or relaunch is needed to run `/grill`, `/helper`,
+  or `/worker` — the command declares the role itself, from anywhere.
+  The unclaimed=plane default is unchanged.
 - **`.agent/skills/pre-test-review/`** — the pre-test review-agent skill:
   call. It is Claude-specific; Codex uses `AGENTS.md` guidance and active
   workspace permissions. This package has no native Codex domain/process

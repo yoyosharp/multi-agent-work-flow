@@ -233,6 +233,107 @@ wt="$hr/.worktree/demo"
   && ok "hook denies a scoper stopping a server" \
   || bad "hook allowed a scoper to stop a server"
 
+
+echo "== session-declared roles (v6.3): registry + declare-role.sh + hook precedence"
+# fake agent CLI: a script named `claude` that runs its args as a child,
+# then sleeps (stays the live agent pid). Its stdout is a file, never the
+# selftest pipe, so the sleep cannot hold the output open.
+fakebin="$work/fakebin"; mkdir -p "$fakebin"
+printf '#!/bin/sh\n"$@"\nsleep 30\n' > "$fakebin/claude"; chmod +x "$fakebin/claude"
+"$fakebin/claude" > "$work/fake-claude.log" 2>&1 &
+fakepid=$!
+sleep 1
+# (a) declare-role.sh writes the registry entry for the injected pid
+WORKFLOW_ROOT="$hr" DECLARE_ROLE_PID="$fakepid" bash "$bin/declare-role.sh" worker demo >/dev/null 2>&1
+[ -f "$hr/.history/_sessions/$fakepid" ] \
+  && grep -qx 'role=worker' "$hr/.history/_sessions/$fakepid" \
+  && grep -qx 'slug=demo' "$hr/.history/_sessions/$fakepid" \
+  && ok "declare-role.sh writes role=worker slug=demo for the injected pid" \
+  || bad "declare-role.sh did not write the registry entry (role/slug)"
+hook_reg() { # hook_reg <pid> <json> — hook with HOOK_AGENT_PID, no role env vars (env -u clears any ambient WORKFLOW_*/WF_* so the registry is the only source)
+  env -u WORKFLOW_ROLE -u WORKFLOW_SLUG -u WF_ROLE -u WF_SLUG WORKFLOW_ROOT="$hr" HOOK_AGENT_PID="$1" bash "$AGENT_DIR/hooks/domain-guard.sh" <<< "$2" 2>/dev/null; echo $?
+}
+# (b) registry worker, cwd = project root (not the worktree): the role is
+# independent of cwd — in-domain edit allowed, out-of-domain denied.
+[ "$(hook_reg "$fakepid" "$(j_edit "$wt/src/test/FooTest.java" "$hr")")" = 0 ] \
+  && ok "hook allows a registry-declared worker's in-domain edit from the project root (role independent of cwd)" \
+  || bad "hook blocked a registry worker's in-domain edit — registry not honoured"
+[ "$(hook_reg "$fakepid" "$(j_edit "$wt/src/main/App.java" "$hr")")" = 2 ] \
+  && ok "hook still denies a registry worker's out-of-domain edit (claim-row tokens)" \
+  || bad "hook allowed a registry worker outside the claim-row domain"
+# (d) registry carve-out: own pid's file allowed, another pid's denied
+[ "$(hook_reg "$fakepid" "$(j_edit "$hr/.history/_sessions/$fakepid" "$hr")")" = 0 ] \
+  && ok "hook allows a session to write its own registry file" \
+  || bad "hook blocked a session's own registry file"
+[ "$(hook_reg "$fakepid" "$(j_edit "$hr/.history/_sessions/999999" "$hr")")" = 2 ] \
+  && ok "hook denies a write to another session's registry file" \
+  || bad "hook allowed a write to another pid's registry file"
+# (c) no registry entry: fall back to cwd derivation (worker in worktree,
+# plane in the project root). Use a known-dead pid so the walk-up cannot
+# find a live agent session above the selftest (which would inject its own role).
+true & deadpid=$!; wait $deadpid 2>/dev/null
+[ "$(hook_reg "$deadpid" "$(j_edit "$wt/src/test/FooTest.java" "$wt")")" = 0 ] \
+  && ok "hook falls back to cwd derivation (worker in worktree) with no registry entry" \
+  || bad "hook did not fall back to the worktree cwd"
+[ "$(hook_reg "$deadpid" "$(j_edit "$hr/.history/TASK_LIST.md" "$hr")")" = 0 ] \
+  && [ "$(hook_reg "$deadpid" "$(j_edit "$wt/src/test/FooTest.java" "$hr")")" = 2 ] \
+  && ok "hook falls back to plane in the project root with no registry entry" \
+  || bad "hook did not fall back to plane in the project root"
+# (e) stale registry entry (dead pid) is ignored — falls back to cwd
+printf 'role=worker\nslug=demo\n' > "$hr/.history/_sessions/$deadpid"
+[ "$(hook_reg "$deadpid" "$(j_edit "$wt/src/test/FooTest.java" "$hr")")" = 2 ] \
+  && ok "hook ignores a registry entry for a dead pid (stale) and falls back to cwd" \
+  || bad "hook honoured a stale registry entry"
+# (e2) no stderr noise: validating a dead pid must not leak a /proc/ error
+err=$(env -u WORKFLOW_ROLE -u WORKFLOW_SLUG -u WF_ROLE -u WF_SLUG WORKFLOW_ROOT="$hr" HOOK_AGENT_PID="$deadpid" bash "$AGENT_DIR/hooks/domain-guard.sh" <<< "$(j_edit "$wt/src/test/FooTest.java" "$hr")" 2>&1)
+[ -z "$(printf '%s' "$err" | grep -F '/proc/')" ] \
+  && ok "hook emits no /proc/ noise on stderr for a dead-pid registry entry" \
+  || bad "hook leaked a /proc/ error on stderr for a dead pid"
+# (f) walk-up: declare-role.sh as a child of the fake agent CLI finds the
+# fake's pid without DECLARE_ROLE_PID, and re-declaring overwrites the entry.
+"$fakebin/claude" env WORKFLOW_ROOT="$hr" bash "$bin/declare-role.sh" scoper > "$work/fake-claude2.log" 2>&1 &
+fakepid2=$!
+sleep 1
+[ -f "$hr/.history/_sessions/$fakepid2" ] \
+  && grep -qx 'role=scoper' "$hr/.history/_sessions/$fakepid2" \
+  && ! grep -q '^slug=' "$hr/.history/_sessions/$fakepid2" \
+  && ok "declare-role.sh walk-up finds the agent pid and writes role=scoper (no slug)" \
+  || bad "declare-role.sh walk-up did not find the agent pid"
+
+# (g) agent-cmd matcher: identical in hook + declare-role (drift guard), and
+# it rejects Claude Code's Bash-tool wrapper (cmdline carries
+# .claude/shell-snapshots/... and dies with the tool call — 2026-11-19 live bug)
+mh=$(sed -n '/>>> agent-cmd matcher/,/<<< agent-cmd matcher/p' "$AGENT_DIR/hooks/domain-guard.sh")
+md=$(sed -n '/>>> agent-cmd matcher/,/<<< agent-cmd matcher/p' "$bin/declare-role.sh")
+[ -n "$mh" ] && [ "$mh" = "$md" ] \
+  && ok "agent-cmd matcher identical in domain-guard.sh and declare-role.sh (no drift)" \
+  || bad "agent-cmd matcher drifted between the hook and declare-role.sh"
+( eval "$mh"
+  is_agent_cmd "/home/u/.local/bin/claude --resume" \
+  && is_agent_cmd "/bin/sh /tmp/x/fakebin/claude sleep 30" \
+  && is_agent_cmd "node /usr/local/bin/claude" \
+  && ! is_agent_cmd "/bin/bash -c source /home/u/.claude/shell-snapshots/snapshot-bash-1.sh && eval x" \
+  && ! is_agent_cmd "bash /repo/.claude/hooks/domain-guard.sh" \
+  && ! is_agent_cmd "tmux new -s claude" ) \
+  && ok "agent-cmd matcher accepts the CLI (native/script/node) and rejects the Bash-tool wrapper" \
+  || bad "agent-cmd matcher misclassified the CLI or the Bash-tool wrapper"
+# (h) end-to-end, NO pid overrides: fake CLI -> Bash-tool-shaped wrapper
+# (bash -c "source .../.claude/shell-snapshots/...") -> declare-role + hook.
+# Both must resolve the CLI pid, not the wrapper's, so a declared helper
+# gets helper rules on Edit (0.scratch allowed, TASK_LIST denied).
+snapd="$work/.claude/shell-snapshots"; mkdir -p "$snapd"; echo ':' > "$snapd/snapshot-bash-1.sh"
+mkdir -p "$work/e2e"; printf '#!/bin/sh\n"$@"\n' > "$work/e2e/claude"; chmod +x "$work/e2e/claude"
+e2e() { "$work/e2e/claude" /bin/bash -c "source '$snapd/snapshot-bash-1.sh' && env -u WORKFLOW_ROLE -u WORKFLOW_SLUG -u WF_ROLE -u WF_SLUG -u DECLARE_ROLE_PID -u HOOK_AGENT_PID WORKFLOW_ROOT='$hr' bash '$bin/declare-role.sh' helper >/dev/null && env -u WORKFLOW_ROLE -u WORKFLOW_SLUG -u WF_ROLE -u WF_SLUG -u HOOK_AGENT_PID WORKFLOW_ROOT='$hr' bash '$AGENT_DIR/hooks/domain-guard.sh' 2>/dev/null; echo \$?" <<< "$1"; }
+r1=$(e2e "$(j_edit "$hr/0.scratch/note.md" "$hr")"); r2=$(e2e "$(j_edit "$hr/.history/TASK_LIST.md" "$hr")")
+[ "$r1" = 0 ] && [ "$r2" = 2 ] \
+  && ok "end-to-end through a Bash-tool wrapper: declared helper gets helper rules (scratch 0, ledger 2)" \
+  || bad "end-to-end through a Bash-tool wrapper: hook missed the registry (scratch=$r1 ledger=$r2)"
+# cleanup: kill the fake agent CLIs and their sleep children (no leak)
+for _fp in $fakepid $fakepid2; do
+  for _c in $(pgrep -P "$_fp" 2>/dev/null); do kill "$_c" 2>/dev/null; done
+  kill "$_fp" 2>/dev/null
+done
+
 echo "== workflow-init (v6): fresh init, re-run, non-git abort"
 iprobe="$work/init-probe"
 mkdir -p "$iprobe/.history/_templates" "$iprobe/.history/_bin"
@@ -260,6 +361,9 @@ grep -qxF '.history/*' "$iprobe/.gitignore" && grep -qxF '!.history/_shared/' "$
 [ -d "$iprobe/.history/_pending" ] \
   && ok "init creates .history/_pending/ for the scoper's intake docs" \
   || bad "init did not create .history/_pending/"
+[ -d "$iprobe/.history/_sessions" ] \
+  && ok "init creates .history/_sessions/ for the role registry" \
+  || bad "init did not create .history/_sessions/"
 [ -f "$iprobe/.history/_templates/intake.template.md" ] \
   && ok "init carries the intake template" \
   || bad "init is missing the intake template"
@@ -1114,9 +1218,11 @@ grep -q "kind:plan-approval clearer:human" docs/workflow/worker-instructions.md 
 grep -q "Test-result review gate" docs/workflow/verify-duties.md \
   && ok "verify-duties carries the test-result-review gate" \
   || bad "verify-duties lost the test-result-review gate"
-grep -q "It spawns phase agents itself" docs/workflow/control-plane-pm.md \
-  && ok "spawn-ban fix intact in pm.md: plane spawns phase agents itself" \
-  || bad "spawn-ban fix lost from pm.md"
+grep -q "Agent sessions are launched by the human" docs/workflow/control-plane-pm.md \
+  && grep -q "the plane spawns a terminal session for a phase agent only on the human's explicit order" docs/workflow/control-plane-pm.md \
+  && grep -q "the plane spawns the reviewer itself — a plane-owned sub-agent, not a terminal session" docs/workflow/control-plane-pm.md \
+  && ok "spawn model corrected in pm.md: human launches, plane spawns a terminal session only on explicit order, reviewer sub-agent still auto-spawned" \
+  || bad "spawn model lost from pm.md (v6.3 correction)"
 ! grep -q "launches nothing" docs/workflow/control-plane-pm.md docs/workflow/control-plane-instructions.md docs/workflow/verify-duties.md \
   && ok "no stale 'launches nothing' wording in plane docs" \
   || bad "stale 'launches nothing' wording present in plane docs"
@@ -1136,7 +1242,7 @@ echo "== /shutdown (v6.1): plane-only command, marker denied to workers, watcher
 [ -f "$AGENT_DIR/commands/shutdown.md" ] \
   && ok "shutdown command present under $AGENT_DIR/commands/" \
   || bad "shutdown command missing from $AGENT_DIR/commands/"
-grep -q "WORKFLOW_ROLE=plane" "$AGENT_DIR/commands/shutdown.md" \
+grep -q "declare-role.sh plane" "$AGENT_DIR/commands/shutdown.md" \
   && grep -q "refuses" "$AGENT_DIR/commands/shutdown.md" \
   && grep -q "Workers never run \`/shutdown\`" "$AGENT_DIR/commands/shutdown.md" \
   && ok "shutdown command states the plane-only role check (refuses from a worker)" \
@@ -1251,15 +1357,14 @@ grep -q "grill-me" "$AGENT_DIR/skills/requirements-grill/SKILL.md" \
   && ok "grill + helper commands present under $AGENT_DIR/commands/" \
   || bad "grill or helper command missing from $AGENT_DIR/commands/"
 grep -q "disable-model-invocation: true" "$AGENT_DIR/commands/grill.md" \
-  && grep -q "WORKFLOW_ROLE=scoper" "$AGENT_DIR/commands/grill.md" \
-  && grep -q "printenv WORKFLOW_ROLE" "$AGENT_DIR/commands/grill.md" \
-  && ok "grill command is user-invoked only and refuses without WORKFLOW_ROLE=scoper" \
-  || bad "grill command lost the user-only flag or the role check"
+  && grep -q "declare-role.sh scoper" "$AGENT_DIR/commands/grill.md" \
+  && ok "grill command is user-invoked only and declares the scoper role (no env var)" \
+  || bad "grill command lost the user-only flag or the declare-role step"
 grep -q "disable-model-invocation: true" "$AGENT_DIR/commands/helper.md" \
-  && grep -q "WORKFLOW_ROLE=helper" "$AGENT_DIR/commands/helper.md" \
+  && grep -q "declare-role.sh helper" "$AGENT_DIR/commands/helper.md" \
   && grep -q "Never edit" "$AGENT_DIR/commands/helper.md" \
-  && ok "helper command is user-invoked only, refuses without WORKFLOW_ROLE=helper, and states the never-edit list" \
-  || bad "helper command lost the user-only flag, the role check, or the brief"
+  && ok "helper command is user-invoked only, declares the helper role (no env var), and states the never-edit list" \
+  || bad "helper command lost the user-only flag, the declare-role step, or the brief"
 [ -f .history/_templates/intake.template.md ] \
   && grep -q "Checkable acceptance scope" .history/_templates/intake.template.md \
   && grep -q "Scope — out" .history/_templates/intake.template.md \

@@ -773,3 +773,86 @@ line-counted below; nothing was dropped silently.
   the template sync source is the templates dir the floor check
   found (beside the script when the package runs against a
   separate live repo, else the live dir — then a no-op).
+
+## 2026-11-18 — v6.3: session-declared roles (registry) + spawn-model correction
+
+Two changes, one release. **Session-declared roles** fix the
+PreToolUse hook so no launch-time env var or cd is needed. The hook
+used to learn the role from `WORKFLOW_ROLE` (set at session start) or
+from the cwd (worktree → worker, else plane) — which forced the human
+to launch `/grill` and `/helper` with the env var set (or relaunch)
+and to `cd` into the worktree to run `/worker`. The v6.2 operational
+requirement (`WORKFLOW_ROLE=scoper claude`, the `grill()`/`helper()`
+shell aliases) is now redundant — do not add the aliases. The session
+declares its own role instead: `declare-role.sh <role> [slug]`
+(`.history/_bin/<platform>/`, Windows: `declare-role.ps1`) writes
+`.history/_sessions/<pid>` (two lines: `role=<role>`, and for worker
+`slug=<slug>`), where `<pid>` is the agent CLI process pid, found by
+walking up the process tree to the agent CLI itself (`is_agent_cmd`:
+argv0 basename `claude`, or sh/bash/dash/zsh/node with argv1 basename
+`claude`; `Get-CimInstance Win32_Process` parent chain on Windows).
+Precedence in the hook: registry first, then the `WORKFLOW_ROLE` /
+`WORKFLOW_SLUG` env vars (backwards compatibility — old launch habits
+still work), then cwd derivation (unchanged). The unclaimed=plane
+default is unchanged. A registry entry is used only if the pid is a
+live agent process (`kill -0` + `is_agent_cmd`); a stale
+entry (dead pid, reused pid, bad role) is ignored, never deleted by
+the hook. A session writes only its own pid's registry file
+(`declare-role.sh` enforces this; the hook's rule 3 carve-out allows
+exactly `.history/_sessions/<own-pid>` and denies any other pid's).
+The commands declare at boot: `/worker <slug>` declares `worker` and
+`cd`s to the worktree, `/control-plane` declares `plane`,
+`/grill` declares `scoper`, `/helper` declares `helper` — the old
+printenv-and-refuse role checks are gone. Init creates
+`.history/_sessions/` and the floor check requires `declare-role.sh`
+(hard fail, like the templates); a package run against a separate live
+repo delivers a missing script (never-overwrite sync, same mechanism
+as the template sync). Selftest proves the registry both ways
+(declare writes role/slug, hook honours it from the project root,
+carve-out allows own / denies other, cwd fallback with no entry,
+stale entry ignored, walk-up finds a fake `claude` process); eval
+adds scenarios 38–39. **KNOWN LIMIT — guardrail, not sandbox**: the
+`claude`-cmdline match is a heuristic (a CLI binary renamed away from
+`claude` is not found — the hook then falls back to env/cwd), and
+shell-redirection writes to the registry are not intercepted — a
+session that deliberately writes `.history/_sessions/<pid>` by hand
+could forge another session's entry (declare-role.sh only ever writes
+its own pid; the hook's carve-out covers Edit/Write, not redirection).
+**Spawn-model correction** (docs only, user-corrected 2026-11-18):
+the human launches agent sessions; the plane spawns a terminal
+session for a phase agent ONLY on the human's explicit order — never
+on its own initiative. This corrects the v6.0 wording ("the plane
+spawns phase agents itself") which had drifted the flow from
+plane-ratify to cli-bounded (the plane asking the human to run
+`/worker` in the worktree, env-var setup). The plane-owned
+SUB-AGENTS are unchanged: the §3.1 pre-test reviewer, plan-review,
+and test-result-review are in-process sub-agents of the plane, and
+the plane still spawns those itself without a human order. Fixed in
+pm.md (§ What this is, Spawn model parenthetical, Model roles, Fix
+routing, Terminal executors, PreToolUse hook), control-plane-
+instructions.md (header + Boot step 1 declares `plane`),
+worker-instructions.md (§1 declares `worker` + cds to the worktree),
+and parallel-agents.md ("two equal launch paths" → human-launched,
+plane-spawned only on explicit order). NOT built: wake-prompt
+session-binding, plane.lock heartbeat — still open candidates.
+
+## v6.3 patch — agent-pid discovery (live finding, 2026-11-19)
+
+Found during the live v6.3 migration: `declare-role.sh` matched the
+first ancestor whose cmdline merely contained `claude`. Under Claude
+Code's Bash tool the immediate parent is the tool's wrapper shell,
+whose cmdline carries `.claude/shell-snapshots/snapshot-bash-….sh` and
+which dies with the tool call — so the registry entry was stale by the
+next call and every role silently fell back to plane. The selftest
+passed only because it injected pids. Fix (taken from the live patch,
+applied to the package): one shared matcher `is_agent_cmd` — argv0
+basename `claude`, or an interpreter (sh/bash/dash/zsh, plus `node`
+for npm installs) whose argv1 basename is `claude` — used by BOTH
+`declare-role.sh` (walk-up) and `domain-guard.sh` (walk-up + the
+stale-entry liveness check), so the hook and the script can never
+disagree about which pid is the agent. The block is fenced with
+`>>> agent-cmd matcher` / `<<< agent-cmd matcher` markers and selftest
+diffs the two copies (drift guard), plus unit cases: CLI native /
+script / node accepted; the Bash-tool wrapper, a hook-path shell and
+`tmux new -s claude` rejected. Windows `declare-role.ps1` now matches
+the exact image name `^claude(\.exe)?$`, not a substring.

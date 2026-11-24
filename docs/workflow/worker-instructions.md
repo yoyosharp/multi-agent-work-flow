@@ -19,7 +19,7 @@ conflicting writers. **How:**
 
 - No slug: read `.history/TASK_LIST.md`; list PLANNED/IN_PROGRESS tasks with no non-terminal
   claim (DECLARED, GRANTED, EXECUTING, STALE, CHALLENGED); ask the human to choose, then stop.
-- With slug: require `.history/<slug>/brief*.md`, else report valid slugs and
+- With slug: declare your role first — `bash .history/_bin/<platform>/declare-role.sh worker <slug>` — then `cd` to the worktree `.worktree/<slug>/` (edits/builds/tests target the task branch). Require `.history/<slug>/brief*.md`, else report valid slugs and
   stop. Copy missing `workers.md`/`qa.md`/`worklog.md`/`inbox.md` from
   `.history/_templates/`.
 - Append your DECLARED row: identity, phase, method, commitment, write domain, resource
