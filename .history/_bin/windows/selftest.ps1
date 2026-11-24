@@ -1,0 +1,183 @@
+﻿# Gate self-test: prove every mechanical gate CAN fail (a check that has
+# never failed has not been shown to work — NamiQ rule, adopted v5.2).
+# Windows/PowerShell variant. Usage: powershell -File selftest.ps1
+# Exit 0 = all gates demonstrated; nonzero = a gate could NOT be shown to
+# fail (or pass) — treat as a broken gate, not a broken fixture.
+$ErrorActionPreference = 'Continue'
+Set-Location (Join-Path $PSScriptRoot '..\..\..')
+$bin = $PSScriptRoot
+$fail = 0
+
+$work = '.history\_selftest'
+if (Test-Path $work) { Remove-Item -Recurse -Force $work }
+New-Item -ItemType Directory -Path $work | Out-Null
+
+function Mk-Fixture($name, $text) {
+  $d = Join-Path $work $name
+  New-Item -ItemType Directory -Path $d | Out-Null
+  Set-Content -Path (Join-Path $d 'worklog.md') -Value $text
+}
+
+$closePass = @"
+2026-11-04 10:00 — worker: executing
+2026-11-04 11:00 CLOSE impl
+What was done: endpoint added (observed: diff on 3 files); cases covered: 3
+gate: mvn -q package BUILD SUCCESS (observed: tail kept in evidence)
+gotcha: Mockito any(UUID) null trap
+open questions: none — see qa.md
+evidence: commit abc123def456 (observed: git log); worklog entries above
+"@
+$closeB1 = "* CLOSE`nWhat was done: x, cases covered: 1 (observed)`nevidence: none"
+$closeB2 = @"
+CLOSE
+What was done: endpoint added, cases covered: 3
+gate: mvn BUILD SUCCESS
+gotcha: none
+evidence: commit abc123def456 and .history/_selftest/qa.md
+"@
+$closeB3 = "CLOSE`ngate: [PASS] (observed)`nevidence: abc123def456 (observed)"
+$closeB5 = "CLOSE`nDEBUG the NPE at line 42`nRoot cause: stub-miss not fixture gap (observed)`ngate: [PASS] (observed)`nevidence: def567abc (observed)`ncases covered: 1`nnote: see worklog for the debug trail"
+$closeB5NoRC = "CLOSE`nDEBUG the NPE`nworked around via try/catch`ngate: [PASS] (observed)`nevidence: def567abc (observed)`ncases covered: 1"
+
+Mk-Fixture 'anchor-pass' $closePass
+Mk-Fixture 'anchor-b1' $closeB1
+Mk-Fixture 'anchor-b2' $closeB2
+Mk-Fixture 'anchor-b3' $closeB3
+Mk-Fixture 'anchor-b5' $closeB5
+Mk-Fixture 'anchor-b5-norc' $closeB5NoRC
+
+function Run-Anchor($name) {
+  & powershell -File (Join-Path $bin 'closecheck.ps1') -Anchors -Slug "_selftest\$name" 2>$null | Out-String
+}
+
+"== closecheck anchors (expect fail-examples to FAIL, pass-example to PASS)"
+if (Run-Anchor 'anchor-pass' -match 'ANCHOR-PASS') { "  ok: anchor gate PASSes a good CLOSE" }
+else { "  SELFTEST-FAIL: anchor gate does not PASS a good CLOSE"; $fail = 1 }
+if (Run-Anchor 'anchor-b1' -match 'B1 FAIL') { "  ok: B1 fails on missing gate tail" }
+else { "  SELFTEST-FAIL: B1 never failed"; $fail = 1 }
+if (Run-Anchor 'anchor-b2' -match 'confidence label') { "  ok: B2 fails on unlabeled claims" }
+else { "  SELFTEST-FAIL: B2 label check never failed"; $fail = 1 }
+if (Run-Anchor 'anchor-b3' -match 'B3 FAIL') { "  ok: B3 fails on thin handoff" }
+else { "  SELFTEST-FAIL: B3 never failed"; $fail = 1 }
+if (Run-Anchor 'anchor-b5-norc' -match 'B5 FAIL') { "  ok: B5 fails on DEBUG without Root cause" }
+else { "  SELFTEST-FAIL: B5 never failed"; $fail = 1 }
+if (Run-Anchor 'anchor-b5' -match 'ANCHOR-PASS') { "  ok: B5 accepts a resolved DEBUG entry" }
+else { "  SELFTEST-FAIL: B5 false positive — Root-cause line rejected"; $fail = 1 }
+
+"== workers.md parsers read both ledger generations with Status in either column"
+@'
+| # | Worker | Phase | Method | Commitment | Status |
+|---|---|---|---|---|---|
+| 1 | w1 | impl | md | c1 | EXECUTING |
+'@ | Set-Content -Path "$work\wm-a.md"
+@'
+| # | Worker | Phase | Extra | Method | Commitment | Status |
+|---|---|---|---|---|---|---|
+| 1 | w1 | impl | e1 | md | c1 | GRANTED |
+'@ | Set-Content -Path "$work\wm-b.md"
+function Get-StatusCol($path) {
+  foreach ($line in Get-Content $path) {
+    if ($line -match '^\|\s*#\s*\|') {
+      $cols = $line -split '\|' | ForEach-Object { $_.Trim() }
+      for ($i = 1; $i -lt $cols.Count; $i++) {
+        $h = ($cols[$i] -replace '#.*$','').Trim()
+        if ($h -eq 'Status') { return $i }
+      }
+      break
+    }
+  }
+  return -1
+}
+foreach ($f in 'a','b') {
+  $si = Get-StatusCol "$work\wm-$f.md"
+  $row = (Get-Content "$work\wm-$f.md") | Where-Object { $_ -match '^\|\s*1\s*\|' } | Select-Object -First 1
+  $val = ($row -split '\|')[$si].Trim()
+  if ($val -eq 'EXECUTING' -or $val -eq 'GRANTED') { "  ok: parser reads layout-$f Status ($val)" }
+  else { "  SELFTEST-FAIL: parser misread layout-$f (got: '$val')"; $fail = 1 }
+}
+
+"== relays sweep distinguishes held (ANSWERED) from released (RELEASED) qa rows"
+# fixture must be a DIRECT child of .history/ — the sweep scans .history\<dir>
+$rg = '.history\relay-gate-selftest'
+if (Test-Path $rg) { Remove-Item -Recurse -Force $rg }
+New-Item -ItemType Directory -Path $rg | Out-Null
+Set-Content -Path (Join-Path $rg 'workers.md') -Value "| # | x |`n|---|---|`n| 1 | w |"
+Set-Content -Path (Join-Path $rg 'qa.md') -Value "| # | Title | Status | Blocks |`n|---|---|---|---|`n| Q1 | first | ANSWERED (held) | impl |`n| Q2 | second | RELEASED | impl |`n| Q3 | third | CONSUMED | impl |"
+$sweep = & powershell -File (Join-Path $bin 'relays.ps1') | Out-String
+if ($sweep -match 'held—surface at next reply\] qa Q1') { "  ok: sweep tags ANSWERED row as held (surface at next reply)" }
+else { "  SELFTEST-FAIL: sweep never tagged an ANSWERED row held — held/release split unproven"; $fail = 1 }
+if ($sweep -match 'released—awaiting worker\] qa Q2') { "  ok: sweep tags RELEASED row as awaiting worker" }
+else { "  SELFTEST-FAIL: sweep never tagged a RELEASED row — release path unproven"; $fail = 1 }
+if ($sweep -match 'qa Q3') { "  SELFTEST-FAIL: sweep surfaced a CONSUMED row — false positive"; $fail = 1 }
+else { "  ok: sweep leaves CONSUMED rows alone" }
+
+"== plane lock holder parsing (v6 track H) — Windows-run-only"
+# lock.ps1 locates its project root from its own path, so the fixture is a
+# scratch tree carrying a copy of the script. This section CANNOT run on the
+# build machine (no PowerShell host there); it is exercised by the Windows
+# probe / a Windows run of selftest.ps1 — do not claim it passed here.
+$lr = Join-Path $work 'lock-root'
+New-Item -ItemType Directory -Path "$lr\.history\_bin\windows" -Force | Out-Null
+Copy-Item (Join-Path $bin 'lock.ps1') "$lr\.history\_bin\windows\lock.ps1"
+$lk = Join-Path $lr '.history\plane.lock'
+function Invoke-Lock($action) {
+  $o = & powershell -File "$lr\.history\_bin\windows\lock.ps1" $action 2>$null
+  return @{ Out = ($o -join "`n"); Code = $LASTEXITCODE }
+}
+# (a) well-formed lock, live pid ($PID — this very process) → HELD
+@("host:pid TESTHOST:$PID", "acquired 2026-11-11 22:48:31") | Set-Content -Path $lk
+$st = Invoke-Lock 'status'
+if ($st.Out -match "HELD by TESTHOST:$PID") { "  ok: lock status HELDs a well-formed live holder" }
+else { "  SELFTEST-FAIL: lock status did not HELD a well-formed live holder ($($st.Out))"; $fail = 1 }
+$tk = Invoke-Lock 'take'
+if ($tk.Code -ne 0) { "  ok: take refuses a live lock" }
+else { "  SELFTEST-FAIL: take accepted a live lock"; $fail = 1 }
+# (b) malformed lock (the Windows defect shape): no hostname on line 1.
+# The timestamp on line 2 must never parse as the holder.
+@("host:pid 10488", "acquired 2026-11-11 22:48:31") | Set-Content -Path $lk
+$st = Invoke-Lock 'status'
+if ($st.Out -match '22:48') { "  SELFTEST-FAIL: lock status read the timestamp as the holder"; $fail = 1 }
+else { "  ok: malformed lock: timestamp is not the holder" }
+if ($st.Out -match 'FRESH-HELD by ,') { "  ok: malformed lock: holder is empty, not a timestamp" }
+else { "  SELFTEST-FAIL: malformed lock: status did not report an empty holder"; $fail = 1 }
+$tk = Invoke-Lock 'take'
+if ($tk.Code -ne 0) { "  ok: take refuses a fresh malformed lock (pid unverifiable)" }
+else { "  SELFTEST-FAIL: take accepted a fresh malformed lock"; $fail = 1 }
+# (c) stale malformed lock: takeover still works, and take writes a
+# well-formed host:pid line (hostname present — the -f formatting).
+(Get-Item $lk).LastWriteTime = (Get-Date).AddHours(-2)
+$tk = Invoke-Lock 'take'
+if (($tk.Code -eq 0) -and ($tk.Out -match 'lock taken')) { "  ok: stale malformed lock: takeover succeeds" }
+else { "  SELFTEST-FAIL: stale malformed lock: takeover refused"; $fail = 1 }
+$first = (Get-Content $lk | Select-Object -First 1)
+$pat = '^host:pid ' + $env:COMPUTERNAME + ':\d+$'
+if ($first -match $pat) { "  ok: take writes a well-formed host:pid line ($first)" }
+else { "  SELFTEST-FAIL: take wrote a malformed host:pid line ($first)"; $fail = 1 }
+
+"== instruction files stay under the 100-line cap (v5.3)"
+# capped = files agents read: docs/workflow, commands, skills.
+# OPTIMIZATIONS.md and README.md are human-facing, deliberately uncapped.
+function Get-CapOver {
+  $over = @()
+  foreach ($glob in 'docs\workflow\*.md','.claude\commands\*.md','.claude\skills\*\SKILL.md') {
+    foreach ($f in Get-Item $glob -ErrorAction SilentlyContinue) {
+      $n = (Get-Content $f.FullName).Count
+      if ($n -gt 100) { $over += "$($f.Name) ($n)" }
+    }
+  }
+  return $over
+}
+$over = Get-CapOver
+if ($over.Count -eq 0) { "  ok: all instruction files <= 100 lines" }
+else { "  SELFTEST-FAIL: over-cap instruction files: $($over -join ', ')"; $fail = 1 }
+# prove the check CAN fail: a 101-line fixture must be flagged, then removed
+$fx = 'docs\workflow\zz-cap-fixture.md'
+1..101 | ForEach-Object { $_ } | Set-Content -Path $fx
+if ((Get-CapOver) -match 'zz-cap-fixture') { "  ok: cap check flags a 101-line file" }
+else { "  SELFTEST-FAIL: cap check never failed — 101-line fixture not flagged"; $fail = 1 }
+Remove-Item -Force $fx
+
+Remove-Item -Recurse -Force $work
+Remove-Item -Recurse -Force $rg
+if ($fail -eq 0) { "SELFTEST-PASS: every gate demonstrated failing and passing"; exit 0 }
+else { "SELFTEST-FAIL: one or more gates unproven"; exit 1 }

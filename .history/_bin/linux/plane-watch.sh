@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# plane-watch.sh — event-driven wake for the control plane (v6 track A).
+#
+# Watches .history/ only (never .worktree/ — every git write / build artifact
+# there would be a storm; worktree state is covered by tick's snapshot when
+# the plane wakes). On a quiet gap after events, runs tick --plane --diff
+# and wakes the plane via tmux send-keys ONLY if the diff is non-empty
+# (POLL-RATE lines filtered out — a cadence transition is not a change
+# worth waking for). Polling (plane-poll.sh) remains the 30-minute
+# staleness backstop and supervises this watcher (restarts it if dead).
+# Phase 2: the same quiet gap also checks per-task inbox.md changes
+# against snapshots and wakes a WAITING worker's registered pane
+# (design draft §7b) — inbox changes only, one wake per slug per cycle,
+# never on the wake text alone (the worker still runs tick --diff and
+# reads inbox.md itself).
+# Track G: the same non-empty-diff cycle also regenerates the static
+# board.html (board.sh one-shot), so the file stays fresh without serve
+# mode; board.html is watch-excluded and outside tick's diff, so the
+# regen cannot self-trigger. Regen failures are logged, never fatal.
+#
+# Usage: plane-watch.sh [project-root] [--test-mode]
+#   --test-mode: read event lines (one path per line) from stdin instead
+#   of inotifywait/fswatch; a quiet gap fires one check, EOF ends the run.
+#   Used by selftest — the event tool itself needs no live test here.
+# Env: PLANE_WATCH_DEBOUNCE (default 15 s), PLANE_AGENT_CMD (default claude).
+# Exit 0 = ended cleanly (signal / stdin EOF in test mode); exit 2 = watcher
+# tool missing (degraded: backstop only — the workflow still works);
+# exit 1 = bad args / no .history/.
+#
+# Safety (design draft §7a/§7b): a pane is NEVER guessed — it comes from
+# .history/._plane_pane (plane, written by the backstop) or
+# .history/._worker_panes/<slug> (worker, written at boot; unregistered
+# workers stay on polling). Before typing, the watcher verifies the pane
+# is alive and its current command is the agent CLI; a pane at a shell
+# prompt (agent exited) is never typed into. One wake per non-empty diff
+# (plane) / per changed inbox (worker); a missed wake is covered by the
+# ladder poll, never by re-sending.
+# Self-triggering is excluded: _tick_snapshots, _poll_schedule, board.html,
+# _plane_pane, _worker_panes, _watcher_state, _watcher.log, _watcher_inbox,
+# _selftest.
+set -u
+
+ROOT="${1:-}"
+TEST_MODE=0
+[ "${2:-}" = "--test-mode" ] && TEST_MODE=1
+[ "${1:-}" = "--test-mode" ] && { TEST_MODE=1; ROOT=""; }
+if [ -z "$ROOT" ]; then
+  ROOT="$(cd "$(dirname "$0")/../../.." && pwd -P)"
+else
+  ROOT="$(cd "$ROOT" 2>/dev/null && pwd -P)" || { echo "plane-watch: no such directory: $1" >&2; exit 1; }
+fi
+BIN="$(cd "$(dirname "$0")" && pwd -P)"
+PLATFORM="linux"; [ "$(uname -s)" = "Darwin" ] && PLATFORM="mac"
+DEBOUNCE="${PLANE_WATCH_DEBOUNCE:-15}"
+AGENT_CMD="${PLANE_AGENT_CMD:-claude}"
+STATE="$ROOT/.history/._watcher_state"
+LOG="$ROOT/.history/_watcher.log"
+INBOX_SNAP="$ROOT/.history/._watcher_inbox"
+EXCLUDE='(_tick_snapshots|_poll_schedule|board\.html|_plane_pane|_worker_panes|_watcher_state|_watcher\.log|_watcher_inbox|_selftest)'
+
+[ -d "$ROOT/.history" ] || { echo "plane-watch: no .history/ under $ROOT (run init first)" >&2; exit 1; }
+
+log() { # log <msg> — timestamped, capped at 200 lines (log file is watch-excluded)
+  printf '%s %s\n' "$(date '+%F %T')" "$1" >> "$LOG"
+  [ "$(wc -l < "$LOG")" -gt 500 ] && tail -n 200 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+}
+state_put() { # state_put <key> <value> — rewrite the small state file
+  local tmp="$STATE.tmp"
+  grep -v "^$1=" "$STATE" 2>/dev/null > "$tmp" || true
+  printf '%s=%s\n' "$1" "$2" >> "$tmp"
+  mv "$tmp" "$STATE"
+}
+state_get() { sed -n "s/^$1=//p" "$STATE" 2>/dev/null | tail -1; }
+
+sha_file() { # sha_file <path> — portable sha256 (linux sha256sum, mac shasum)
+  case "$PLATFORM" in
+    mac) shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1 ;;
+    *) sha256sum "$1" 2>/dev/null | cut -d' ' -f1 ;;
+  esac
+}
+
+send_wake() { # send_wake <pane> <message> <who> — tmux pre-check + one wake line
+  local pane="$1" message="$2" who="$3" info dead cmd agent_lc cmd_lc
+  if [ -z "$pane" ]; then log "no pane registered for $who — polling only"; return 0; fi
+  command -v tmux >/dev/null 2>&1 || { log "tmux missing — cannot wake $who pane $pane, polling only"; return 0; }
+  info="$(tmux display-message -p -t "$pane" '#{pane_dead}|#{pane_current_command}' 2>/dev/null || true)"
+  if [ -z "$info" ]; then log "refusing wake: $who pane $pane does not exist"; return 0; fi
+  dead="${info%%|*}"; cmd="${info#*|}"
+  if [ -z "$dead" ]; then log "refusing wake: $who pane $pane does not exist"; return 0; fi # target invalid (tmux prints an empty format instead of failing)
+  agent_lc="$(printf '%s' "$AGENT_CMD" | tr '[:upper:]' '[:lower:]')"
+  cmd_lc="$(printf '%s' "$cmd" | tr '[:upper:]' '[:lower:]')"
+  if [ "$dead" != "0" ]; then log "refusing wake: $who pane $pane is dead"; return 0; fi
+  case "$cmd_lc" in *"$agent_lc"*) ;; *) log "refusing wake: $who pane $pane runs '$cmd', not the agent ($AGENT_CMD)"; return 0 ;; esac
+  tmux send-keys -t "$pane" "$message" Enter 2>/dev/null \
+    && { log "woke $who pane $pane"; state_put last_wake "$(date '+%F %T')"; } \
+    || log "send-keys to $who pane $pane failed"
+}
+
+wake_plane() { # wake_plane — type one wake line into the plane pane, if safe
+  local pane
+  pane="$(cat "$ROOT/.history/._plane_pane" 2>/dev/null | tr -d '[:space:]')"
+  if [ -z "$pane" ]; then log "no plane pane registered — backstop only"; return 0; fi
+  send_wake "$pane" "plane-wake: .history changed" "plane"
+}
+
+worker_waiting() { # worker_waiting <task-dir> — 0 if the worker waits for input
+  local d="$1" last_state live
+  [ -f "$d/workers.md" ] || return 1
+  live="$(awk -F'|' '
+    function trim(x) { gsub(/^ +| +$/,"",x); return x }
+    /^\|[ ]*#[ ]*\|/ && !hdr {
+      for (i=2; i<=NF; i++) { h=trim($i); sub(/#.*/,"",h); if (h=="Status") si=i }
+      hdr=1; next
+    }
+    /^\|[ ]*[0-9]+[ ]*\|/ { s=trim($si); if (s=="EXECUTING" || s=="GRANTED") print "live" }' "$d/workers.md" 2>/dev/null | head -1)"
+  [ "$live" = "live" ] || return 1
+  last_state="$(grep -E '^state: ' "$d/worklog.md" 2>/dev/null | tail -1 | sed 's/^state: //; s/ .*//')"
+  [ "$last_state" = "WAITING" ] || [ "$last_state" = "BLOCKED" ]
+}
+
+check_worker_wakes() { # check_worker_wakes — Phase 2: inbox change + waiting worker
+  local d slug snap cur pane
+  mkdir -p "$INBOX_SNAP"
+  for d in "$ROOT"/.history/*/; do
+    [ -f "${d}inbox.md" ] || continue
+    slug="${d%/}"; slug="${slug##*/}"
+    case "$slug" in _*) continue ;; esac # snapshots/registry, not tasks
+    short="${slug#[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-}" # task dir is <date>-<slug>; pane file is keyed by <slug>
+    snap="$INBOX_SNAP/$slug"
+    cur="$(sha_file "${d}inbox.md")"
+    if [ ! -f "$snap" ]; then printf '%s\n' "$cur" > "$snap"; continue; fi # baseline, no wake
+    [ "$(cat "$snap")" = "$cur" ] && continue
+    printf '%s\n' "$cur" > "$snap"
+    worker_waiting "$d" || { log "inbox changed for $slug but worker is not waiting — no wake"; continue; }
+    pane="$(head -1 "$ROOT/.history/._worker_panes/$short" 2>/dev/null | tr -d '[:space:]')"
+    if [ -z "$pane" ]; then log "inbox changed for waiting worker $slug but no pane registered — polling only"; continue; fi
+    send_wake "$pane" "worker-wake: inbox changed for $short" "worker $slug"
+  done
+}
+
+regen_board() { # regen_board — keep the static board.html fresh (track G)
+  # board.html is watch-excluded and outside tick's diff, so this write
+  # cannot self-trigger a new cycle. Never fails the cycle: log and continue.
+  if bash "$BIN/board.sh" >/dev/null 2>&1; then
+    log "board regenerated"
+  else
+    log "board regen failed — static board.html is stale; serve mode still regenerates per GET"
+  fi
+}
+
+check_and_wake() { # check_and_wake — diff-gated wake (the watcher's only wake path)
+  local tick_out out rc
+  tick_out="$(bash "$BIN/tick.sh" --plane --diff 2>/dev/null)"; rc=$?
+  out="$(printf '%s' "$tick_out" | grep -v '^POLL-RATE' || true)"
+  state_put last_check "$(date '+%F %T')"
+  if [ "$rc" -ne 0 ]; then log "tick --plane --diff failed (rc=$rc) — no lock? skipping wake"; return 0; fi
+  if [ -z "$out" ]; then log "empty diff — no wake"; return 0; fi
+  log "non-empty diff — waking plane: $(printf '%s' "$out" | head -1)"
+  wake_plane
+  regen_board
+}
+
+watch_events() { # watch_events — the platform event stream, one line per event
+  case "$PLATFORM" in
+    linux) inotifywait -m -r -e close_write,create,delete,moved_to,attrib --exclude "$EXCLUDE" "$ROOT/.history" ;;
+    mac) fswatch -r -o --event Created --event Updated --event Removed --event Renamed --exclude "$EXCLUDE" "$ROOT/.history" ;;
+  esac
+}
+
+if [ "$TEST_MODE" = 0 ]; then
+  case "$PLATFORM" in
+    linux) command -v inotifywait >/dev/null 2>&1 || { echo "plane-watch: inotifywait not found — watcher unavailable, backstop only" >&2; exit 2; } ;;
+    mac) command -v fswatch >/dev/null 2>&1 || { echo "plane-watch: fswatch not found — watcher unavailable, backstop only" >&2; exit 2; } ;;
+  esac
+  exec 3< <(watch_events)
+else
+  exec 3<&0
+fi
+
+printf 'pid=%s\nstarted=%s\ntool=%s\n' "$$" "$(date '+%F %T')" "$([ "$TEST_MODE" = 1 ] && echo test-mode || echo "$PLATFORM")" > "$STATE"
+log "watcher started (pid $$, debounce ${DEBOUNCE}s, mode $([ "$TEST_MODE" = 1 ] && echo test || echo "$PLATFORM"))"
+trap 'log "watcher stopping"; exit 0' TERM INT
+
+pending=0
+while true; do
+  # NB: capture read's status directly — `$?` after an `if` is 0 when the
+  # condition is false, so the old `if read...; then...; fi; rc=$?` read 0
+  # forever and spun. read returns 0 = line, 1 = EOF, >128 = timeout.
+  IFS= read -r -t "$DEBOUNCE" _ev <&3
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    pending=1; state_put last_event "$(date '+%F %T')"
+    continue
+  fi
+  if [ "$rc" -eq 1 ]; then # EOF: event source ended — fire once, then end
+    if [ "$pending" = 1 ]; then check_and_wake; check_worker_wakes; fi
+    log "event source ended — watcher stopping"
+    exit 0
+  fi
+  # timeout (>128): quiet gap — fire once per burst, never once per write
+  if [ "$pending" = 1 ]; then pending=0; check_and_wake; check_worker_wakes; fi
+done
