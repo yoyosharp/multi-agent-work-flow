@@ -1,8 +1,11 @@
 ﻿# Native Windows probe for the v6 server lifecycle (track F).
 # Usage: pwsh -NoProfile -ExecutionPolicy Bypass -File run-server-matrix.ps1
-# Requires Windows PowerShell 5.1+ or PowerShell 7+, CIM, and
-# Get-NetTCPConnection. It uses only PowerShell/.NET; no WSL, Python,
-# curl, tmux, or Bash is needed for this automated probe.
+# Requires Windows PowerShell 5.1+ or PowerShell 7+, CIM (Win32_Process
+# for cmdline checks), and netstat.exe (port-ownership checks — the CIM
+# MSFT_NetTCPConnection class returns no rows on some machines, so the
+# probe and server.ps1 read the TCP table via netstat instead). It uses
+# only PowerShell/.NET; no WSL, Python, curl, tmux, or Bash is needed
+# for this automated probe.
 param()
 $ErrorActionPreference = 'Stop'
 $script:pass = 0
@@ -15,6 +18,7 @@ $script:taskDir = Join-Path $script:root '.history\probe'
 $script:worktree = Join-Path $script:root '.worktree\probe'
 $script:port = 0
 $script:wrongPort = 0
+$script:portOwnerWorks = $false
 $script:marker = 'server-probe-stub'
 $script:powerShellExe = (Get-Process -Id $PID).Path
 $script:bootExe = 'powershell.exe'
@@ -25,6 +29,22 @@ function Get-FreePort {
   $listener.Start()
   try { return ([Net.IPEndPoint]$listener.LocalEndpoint).Port }
   finally { $listener.Stop() }
+}
+
+function Get-PortOwnerPid([int]$Port) {
+  # Port ownership via netstat -ano: the CIM MSFT_NetTCPConnection class
+  # returns zero rows on some machines (whole class empty inside the Codex
+  # sandbox), while netstat reads the same TCP table directly. .NET
+  # GetActiveTcpListeners() confirms a port listens but returns no owner
+  # pid, so it cannot replace this check. 0 = no owner found (or netstat
+  # unavailable); the caller treats that as UNVERIFIED, never as a pass.
+  if ($Port -le 0) { return 0 }
+  $lines = @()
+  try { $lines = netstat -ano -p TCP } catch { return 0 }
+  foreach ($line in $lines) {
+    if ($line -match "^\s*TCP\s+\S+:$Port\s+\S+\s+LISTENING\s+(\d+)\s*$") { return [int]$Matches[1] }
+  }
+  return 0
 }
 
 function Pass([string]$Name) { $script:pass++; "PROBE-PASS: $Name" }
@@ -113,7 +133,26 @@ while ($true) {
 
   '== 1. Windows probe floor'
   if ($PSVersionTable.PSVersion -ge [version]'5.1') { Pass "PowerShell $($PSVersionTable.PSVersion)" } else { Fail 'PowerShell 5.1 or newer required' }
-  if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) { Pass 'Get-NetTCPConnection available for port ownership checks' } else { Fail 'Get-NetTCPConnection unavailable' }
+  # Port-ownership floor: prove netstat can see a listener before trusting
+  # it — the CIM class this check used to test returns zero rows on some
+  # machines (whole class empty inside the Codex sandbox), so mere cmdlet
+  # existence proves nothing. If no mechanism sees listeners, the flag
+  # below turns the port-dependent checks into visible SKIPs, not
+  # misleading FAILs.
+  if (Get-Command netstat -ErrorAction SilentlyContinue) {
+    $floorListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+    $floorListener.Start()
+    try {
+      $floorPort = ([Net.IPEndPoint]$floorListener.LocalEndpoint).Port
+      $floorDeadline = (Get-Date).AddSeconds(2)
+      while ((Get-Date) -lt $floorDeadline) {
+        if ((Get-PortOwnerPid $floorPort) -eq $PID) { $script:portOwnerWorks = $true; break }
+        Start-Sleep -Milliseconds 200
+      }
+    } finally { $floorListener.Stop() }
+  }
+  if ($script:portOwnerWorks) { Pass 'netstat-based port ownership detection works (sees this process listening)' }
+  else { Skip 'port ownership detection' 'netstat cannot see listeners on this machine — port-dependent checks will skip, not fail' }
   if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) { Pass 'CIM process command-line query available' } else { Fail 'CIM unavailable' }
   $agentsFile = Join-Path $PSScriptRoot 'AGENTS.md'
   if ((Test-Path $agentsFile) -and (Select-String -Path $agentsFile -Pattern 'workflow-pointer: v6 begin' -Quiet)) {
@@ -128,6 +167,7 @@ while ($true) {
   New-Item -ItemType Directory -Path (Join-Path $codexInitRoot '.history\_templates'), (Join-Path $codexInitRoot '.history\_bin\windows') -Force | Out-Null
   Copy-Item -Path (Join-Path $PSScriptRoot '.history\_templates\*') -Destination (Join-Path $codexInitRoot '.history\_templates') -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot '.history\_bin\windows\init.ps1') -Destination (Join-Path $codexInitRoot '.history\_bin\windows\init.ps1')
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot '.history\_bin\windows\declare-role.ps1') -Destination (Join-Path $codexInitRoot '.history\_bin\windows\declare-role.ps1')
   Copy-Item -LiteralPath $agentsFile -Destination (Join-Path $codexInitRoot 'AGENTS.md')
   Set-Content -LiteralPath (Join-Path $codexInitRoot 'CLAUDE.md') -Value '# existing Claude instructions'
   & git -C $codexInitRoot init --quiet
@@ -154,16 +194,19 @@ while ($true) {
     else { Fail 'stub server HTTP response' "status=$($response.StatusCode), body=$($response.Content)" }
   } catch { Fail 'stub server HTTP response' $_.Exception.Message }
   $status = Invoke-Server 'status'
-  if ($status.Text -match 'SERVER-RUNNING') { Pass 'status verifies marker and listening port' }
+  if (-not $script:portOwnerWorks) { Skip 'status verifies marker and listening port' 'port ownership detection is blind on this machine' }
+  elseif ($status.Text -match 'SERVER-RUNNING') { Pass 'status verifies marker and listening port' }
   else { Fail 'status should report RUNNING' $status.Text }
 
   '== 3. stop is scoped and repeatable'
   $stop = Invoke-Server 'stop'
-  if (($stop.Text -match 'SERVER-STOPPED') -and (-not (Test-Alive $serverPid))) { Pass 'stop terminates only the verified server pid' }
+  if (-not $script:portOwnerWorks) { Skip 'stop terminates only the verified server pid' 'port ownership detection is blind on this machine' }
+  elseif (($stop.Text -match 'SERVER-STOPPED') -and (-not (Test-Alive $serverPid))) { Pass 'stop terminates only the verified server pid' }
   else { Fail 'stop verified server' $stop.Text }
   if (Test-Alive $PID) { Pass 'probe PowerShell process remains alive after stop' } else { Fail 'probe host unexpectedly exited' }
   $again = Invoke-Server 'stop'
-  if ($again.Text -match 'SERVER-STOPPED') { Pass 'second stop is idempotent' }
+  if (-not $script:portOwnerWorks) { Skip 'second stop is idempotent' 'port ownership detection is blind on this machine' }
+  elseif ($again.Text -match 'SERVER-STOPPED') { Pass 'second stop is idempotent' }
   else { Fail 'second stop' $again.Text }
 
   '== 4. forged pidfile / pid reuse defense'
@@ -178,21 +221,27 @@ while ($true) {
   '== 5. wrong port ownership'
   $wrong = Start-Stub $script:wrongPort
   try {
-    $deadline = (Get-Date).AddSeconds(8)
-    $listening = $false
-    while ((Get-Date) -lt $deadline) {
-      if (Get-NetTCPConnection -LocalPort $script:wrongPort -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.OwningProcess -eq $wrong.Id }) { $listening = $true; break }
-      Start-Sleep -Milliseconds 200
-    }
-    if (-not $listening) { Fail 'wrong-port fixture starts' 'stub did not own its listening port' }
-    else {
-      Write-PidFile $wrong.Id $script:port
-      $wrongStatus = Invoke-Server 'status'
-      $wrongStop = Invoke-Server 'stop'
-      if (($wrongStatus.Text -match 'SERVER-UNVERIFIED') -and ($wrongStatus.Text -match 'does not hold a LISTEN socket')) { Pass 'wrong-port pid is unverified' }
-      else { Fail 'wrong-port status refused' $wrongStatus.Text }
-      if (($wrongStop.Text -match 'SERVER-REFUSED') -and (Test-Alive $wrong.Id)) { Pass 'wrong-port stop refused without killing the fixture' }
-      else { Fail 'wrong-port stop refused safely' $wrongStop.Text }
+    if (-not $script:portOwnerWorks) {
+      Skip 'wrong-port fixture starts' 'port ownership detection is blind on this machine'
+      Skip 'wrong-port pid is unverified' 'port ownership detection is blind on this machine'
+      Skip 'wrong-port stop refused without killing the fixture' 'port ownership detection is blind on this machine'
+    } else {
+      $deadline = (Get-Date).AddSeconds(8)
+      $listening = $false
+      while ((Get-Date) -lt $deadline) {
+        if ((Get-PortOwnerPid $script:wrongPort) -eq $wrong.Id) { $listening = $true; break }
+        Start-Sleep -Milliseconds 200
+      }
+      if (-not $listening) { Fail 'wrong-port fixture starts' 'stub did not own its listening port' }
+      else {
+        Write-PidFile $wrong.Id $script:port
+        $wrongStatus = Invoke-Server 'status'
+        $wrongStop = Invoke-Server 'stop'
+        if (($wrongStatus.Text -match 'SERVER-UNVERIFIED') -and ($wrongStatus.Text -match 'does not hold a LISTEN socket')) { Pass 'wrong-port pid is unverified' }
+        else { Fail 'wrong-port status refused' $wrongStatus.Text }
+        if (($wrongStop.Text -match 'SERVER-REFUSED') -and (Test-Alive $wrong.Id)) { Pass 'wrong-port stop refused without killing the fixture' }
+        else { Fail 'wrong-port stop refused safely' $wrongStop.Text }
+      }
     }
   } finally { if (Test-Alive $wrong.Id) { Stop-Process -Id $wrong.Id -Force -ErrorAction SilentlyContinue } }
 

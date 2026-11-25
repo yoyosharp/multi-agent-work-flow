@@ -210,8 +210,8 @@ if ((Select-String -Path 'docs\workflow\worker-instructions.md' -Pattern 'kind:p
 else { "  SELFTEST-FAIL: worker-instructions lost kind:plan-approval"; $fail = 1 }
 if (Select-String -Path 'docs\workflow\verify-duties.md' -Pattern 'Test-result review gate' -Quiet) { "  ok: verify-duties carries the test-result-review gate" }
 else { "  SELFTEST-FAIL: verify-duties lost the test-result-review gate"; $fail = 1 }
-if (Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern 'It spawns phase agents itself' -Quiet) { "  ok: spawn-ban fix intact in pm.md: plane spawns phase agents itself" }
-else { "  SELFTEST-FAIL: spawn-ban fix lost from pm.md"; $fail = 1 }
+if ((Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern 'Agent sessions are launched by the human' -Quiet) -and (Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern "the plane spawns a terminal session for a phase agent only on the human's explicit order" -Quiet) -and (Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern 'the plane spawns the reviewer itself — a plane-owned sub-agent, not a terminal session' -Quiet)) { "  ok: spawn model corrected in pm.md (v6.3): human launches, plane spawns a terminal session only on explicit order, reviewer sub-agent auto-spawned" }
+else { "  SELFTEST-FAIL: spawn model lost from pm.md (v6.3 correction)"; $fail = 1 }
 if (Select-String -Path 'docs\workflow\control-plane-pm.md','docs\workflow\control-plane-instructions.md','docs\workflow\verify-duties.md' -Pattern 'launches nothing' -Quiet) { "  SELFTEST-FAIL: stale 'launches nothing' wording present in plane docs"; $fail = 1 }
 else { "  ok: no stale 'launches nothing' wording in plane docs" }
 if ((Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern 'never stops to ask' -Quiet) -and (Select-String -Path 'docs\workflow\async-inputs.md' -Pattern 'WAIVE <slug>' -Quiet)) { "  ok: §6 defaults to campaign: no blocking ask, waive by charter or WAIVE relay" }
@@ -252,13 +252,13 @@ else { "  SELFTEST-FAIL: plane-poll with the marker still ran scans"; $fail = 1 
 # -> RELEASED -> session-end log), as the plane observes it.
 $sd = Join-Path $work 'shutdown-release'
 New-Item -ItemType Directory -Path "$sd\.history\2026-11-11-demo" -Force | Out-Null
-Set-Content -Path "$sd\.history\2026-11-11-demo\worklog.md" -Value "2026-11-11 10:00 — worker: executing`nstate: ACTIVE impl"
+Set-Content -Path "$sd\.history\2026-11-11-demo\worklog.md" -Encoding UTF8 -Value "2026-11-11 10:00 — worker: executing`nstate: ACTIVE impl"
 Set-Content -Path "$sd\.history\2026-11-11-demo\workers.md" -Value "| # | Worker | Host:Pid | Launched-by | Phase | Method | Commitment | Write domain | Resource tokens | Claimed-at | Status | Granted-at | Notes |`n|---|---|---|---|---|---|---|---|---|---|---|---|---|`n| 1 | w1 | host:1 | plane | impl | md | c1 | src/test/** | manual-test | 2026-11-11 10:00 | EXECUTING | 2026-11-11 10:01 | |"
 Set-Content -Path "$sd\.history\2026-11-11-demo\inbox.md" -Value "inbox for demo"
-Set-Content -Path "$sd\.history\SHUTDOWN.md" -Value "SHUTDOWN — operator shutdown`nat 2026-11-11 10:30 UTC by plane host:1"
-Add-Content -Path "$sd\.history\2026-11-11-demo\inbox.md" -Value "SHUTDOWN — operator shutdown"
+Set-Content -Path "$sd\.history\SHUTDOWN.md" -Encoding UTF8 -Value "SHUTDOWN — operator shutdown`nat 2026-11-11 10:30 UTC by plane host:1"
+Add-Content -Path "$sd\.history\2026-11-11-demo\inbox.md" -Encoding UTF8 -Value "SHUTDOWN — operator shutdown"
 (Get-Content "$sd\.history\2026-11-11-demo\workers.md") -replace 'EXECUTING','RELEASED' | Set-Content -Path "$sd\.history\2026-11-11-demo\workers.md"
-Add-Content -Path "$sd\.history\2026-11-11-demo\worklog.md" -Value "2026-11-11 10:31 — shutdown: current step committed; B3 checkpoint: impl done through Foo, tests pending, resume at Bar`n2026-11-11 10:31 session end — shutdown"
+Add-Content -Path "$sd\.history\2026-11-11-demo\worklog.md" -Encoding UTF8 -Value "2026-11-11 10:31 — shutdown: current step committed; B3 checkpoint: impl done through Foo, tests pending, resume at Bar`n2026-11-11 10:31 session end — shutdown"
 if (-not (Select-String -Path "$sd\.history\2026-11-11-demo\workers.md" -Pattern '\| (EXECUTING|GRANTED) \|' -Quiet)) { "  ok: after the signal, no live claim rows remain (plane wait terminates)" }
 else { "  SELFTEST-FAIL: a live claim row survived the shutdown release"; $fail = 1 }
 if ((Select-String -Path "$sd\.history\2026-11-11-demo\worklog.md" -Pattern 'session end — shutdown' -Quiet) -and (Select-String -Path "$sd\.history\2026-11-11-demo\worklog.md" -Pattern 'B3 checkpoint' -Quiet) -and (Select-String -Path "$sd\.history\2026-11-11-demo\inbox.md" -Pattern '^SHUTDOWN — ' -Quiet)) { "  ok: shutdown release leaves the B3 checkpoint + session-end log + inbox row" }
@@ -290,10 +290,20 @@ else { "  SELFTEST-FAIL: hook missing the registry read / override / carve-out";
 if ((Select-String -Path '.history\_bin\windows\init.ps1' -Pattern '_sessions' -Quiet) -and (Select-String -Path '.history\_bin\windows\init.ps1' -Pattern 'declare-role.ps1' -Quiet)) { "  ok: init.ps1 creates .history/_sessions/ and requires declare-role.ps1" }
 else { "  SELFTEST-FAIL: init.ps1 missing the _sessions dir or the declare-role floor check"; $fail = 1 }
 if ((Select-String -Path (Join-Path $AgentDir 'commands\shutdown.md') -Pattern 'shutdown.sh' -Quiet)) { "  ok: shutdown command relies on the declared plane role (no env var)" }
+else { "  SELFTEST-FAIL: shutdown.md lost the declared-role check"; $fail = 1 }
 if (-not (Select-String -Path (Join-Path $AgentDir 'settings.json') -Pattern 'CLAUDE_CODE_AUTO_COMPACT_WINDOW' -Quiet) -and -not (Select-String -Path (Join-Path $AgentDir 'settings.json') -Pattern 'autoCompactEnabled' -Quiet)) { "  ok: settings.json carries no auto-compact env (per-agent only since v6.4)" }
 else { "  SELFTEST-FAIL: settings.json regained a package-level auto-compact setting"; $fail = 1 }
 
-else { "  SELFTEST-FAIL: shutdown.md lost the declared-role check"; $fail = 1 }
+"== Codex skills + netstat port check (v6.4.2): static only"
+# Static assertions only — there is no PowerShell host on the build machine,
+# so the behavior itself is proven by a Windows run of selftest.ps1 and
+# run-server-matrix.ps1 (target 19 pass / 0 fail / 2 skip).
+if ((Select-String -Path '.history\_bin\windows\tick.ps1' -Pattern '\.Trim\(\)' -Quiet) -and (Select-String -Path '.history\_bin\windows\tick.ps1' -Pattern '-NoNewline' -Quiet)) { "  ok: tick.ps1 trims snapshot reads and writes without trailing newline (no false CHANGED)" }
+else { "  SELFTEST-FAIL: tick.ps1 lost the snapshot Trim/NoNewline fix"; $fail = 1 }
+if ((Select-String -Path '.history\_bin\windows\server.ps1' -Pattern 'Get-PortOwnerPid' -Quiet) -and -not (Select-String -Path '.history\_bin\windows\server.ps1' -Pattern 'Get-NetTCPConnection' -Quiet) -and (Select-String -Path '.history\_bin\windows\server.ps1' -Pattern 'Get-CimInstance Win32_Process' -Quiet)) { "  ok: server.ps1 checks port ownership via netstat (CIM kept for cmdline only)" }
+else { "  SELFTEST-FAIL: server.ps1 still uses the CIM port check or lost the cmdline check"; $fail = 1 }
+if ((Select-String -Path 'run-server-matrix.ps1' -Pattern 'Get-PortOwnerPid' -Quiet) -and -not (Select-String -Path 'run-server-matrix.ps1' -Pattern 'Get-NetTCPConnection' -Quiet) -and (Select-String -Path 'run-server-matrix.ps1' -Pattern 'declare-role\.ps1' -Quiet) -and (Select-String -Path 'run-server-matrix.ps1' -Pattern 'portOwnerWorks' -Quiet)) { "  ok: probe uses netstat port ownership, copies declare-role.ps1 into the init fixture, and skips (not fails) when no mechanism sees listeners" }
+else { "  SELFTEST-FAIL: probe still uses the CIM port check, misses declare-role.ps1, or has no blind-mechanism skip"; $fail = 1 }
 Remove-Item -Recurse -Force $work
 Remove-Item -Recurse -Force $rg
 if ($fail -eq 0) { "SELFTEST-PASS: every gate demonstrated failing and passing"; exit 0 }

@@ -267,10 +267,12 @@ verification — don't.
   the current branch at the root (and refuses on unrelated histories).
   It cannot target `.workflow/`. Pulls happen inside the nested clone
   only; the parent never merges the workflow history.
-- **Degraded floor** (no hook support, no tmux, no watcher tool): the
-  install still works as v5.3 polling-only, but the receipt must say so
-  and you must tell the human — never present a degraded install as a
-  full one.
+- **Degraded floor** (no hook support, no tmux, no watcher tool, no
+  Python runtime): the install still works as v5.3 polling-only, but
+  the receipt must say so and you must tell the human — never present
+  a degraded install as a full one. The 3-minute poll is not a timer
+  by itself: on Windows it needs an external trigger (Task Scheduler
+  running `plane-poll.ps1`, or another session resuming the plane).
 
 ## 9. Verification checklist (adopt and migrate alike)
 
@@ -283,3 +285,7 @@ verification — don't.
 - The parent's `git status` is clean and `.gitignore` contains
   `/.workflow/`; `git -C .workflow log -1` shows the template version
   in use. A fresh clone has no `.workflow/` until §3 step 1 runs.
+- On Windows: `run-server-matrix.ps1` → target 19 pass / 0 fail;
+  Python and tmux stay skips on a box without them (the probe's
+  port-dependent checks skip, not fail, when no mechanism can see
+  listeners).

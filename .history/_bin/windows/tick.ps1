@@ -183,33 +183,33 @@ $prevRate = -1
 if (Test-Path $streakRateFile) { $prevRate = [int](Get-Content $streakRateFile -Raw) }
 $indexOut = if (Test-Path .history\TASK_LIST.md) { (Get-FileHash .history\TASK_LIST.md -Algorithm SHA256).Hash } else { 'TASK_LIST missing' }
 $indexSnap = Join-Path $snapdir '.index'
-$indexPrev = if (Test-Path $indexSnap) { Get-Content $indexSnap -Raw } else { $null }
+$indexPrev = if (Test-Path $indexSnap) { ([string](Get-Content $indexSnap -Raw)).Trim() } else { $null }
 if ($indexPrev -ne $indexOut) {
   '== TASK_LIST CHANGED'
   $indexOut
-  Set-Content -Path $indexSnap -Value $indexOut
+  Set-Content -Path $indexSnap -Value $indexOut -NoNewline
   $changed = $true
 }
 foreach ($slug in $Slugs) {
   if (-not (Test-Path ".history\$slug")) { continue }
   $out = Get-TaskBlock $slug
   $snap = Join-Path $snapdir $slug
-  $prev = if (Test-Path $snap) { Get-Content $snap -Raw } else { $null }
+  $prev = if (Test-Path $snap) { ([string](Get-Content $snap -Raw)).Trim() } else { $null }
   if ($prev -ne $out) {
     "== $slug CHANGED"
     $out
-    Set-Content -Path $snap -Value $out
+    Set-Content -Path $snap -Value $out -NoNewline
     $changed = $true
   }
 }
 foreach ($w in Get-SelectedWorktrees) {
   $out = Get-WtBlock $w
   $snap = Join-Path $snapdir ".wt-$($w.Name)"
-  $prev = if (Test-Path $snap) { Get-Content $snap -Raw } else { $null }
+  $prev = if (Test-Path $snap) { ([string](Get-Content $snap -Raw)).Trim() } else { $null }
   if ($prev -ne $out) {
     "-- $($w.Name) CHANGED"
     $out
-    Set-Content -Path $snap -Value $out
+    Set-Content -Path $snap -Value $out -NoNewline
     $changed = $true
   }
 }

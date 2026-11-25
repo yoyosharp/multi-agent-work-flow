@@ -17,7 +17,7 @@
 # only — MT_SERVER_MATCH is plane-only, never read from mt-config.env.
 # The pidfile (<task>\server.pid) is informational only; stop/status verify
 # LIVE properties (CIM CommandLine contains the marker; the pid owns the
-# LISTEN socket on the port via Get-NetTCPConnection).
+# LISTEN socket on the port via netstat -ano (Get-PortOwnerPid).
 param([string]$Slug = "", [string]$Verb = "")
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
@@ -51,10 +51,23 @@ function Get-TaskDir([string]$Slug) {
   }
   return $best
 }
+function Get-PortOwnerPid([int]$Port) {
+  # Port ownership via netstat -ano: the CIM MSFT_NetTCPConnection class
+  # returns zero rows on some machines (whole class empty inside the Codex
+  # sandbox), while netstat reads the same TCP table directly. .NET
+  # GetActiveTcpListeners() confirms a port listens but returns no owner
+  # pid, so it cannot replace this check. 0 = no owner found (or netstat
+  # unavailable); the caller treats that as UNVERIFIED, never as a pass.
+  if ($Port -le 0) { return 0 }
+  $lines = @()
+  try { $lines = netstat -ano -p TCP } catch { return 0 }
+  foreach ($line in $lines) {
+    if ($line -match "^\s*TCP\s+\S+:$Port\s+\S+\s+LISTENING\s+(\d+)\s*$") { return [int]$Matches[1] }
+  }
+  return 0
+}
 function Test-PidHoldsPort([int]$ProcessId, [string]$Port) {
-  $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
-    Where-Object { $_.OwningProcess -eq $ProcessId }
-  return ($null -ne $conn)
+  return ((Get-PortOwnerPid $Port) -eq $ProcessId)
 }
 function Test-ServerPid([int]$ProcessId, [string]$Marker, [string]$Port) {
   # Returns "" when the pid IS this task's server, else the refusal reason.
