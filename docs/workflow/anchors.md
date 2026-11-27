@@ -32,14 +32,14 @@ checkable statement. Labels are only binding in handoff CLOSE entries
 3. **Project facts** (CLAUDE.md, memory) — reference data; informs, never binds behavior
 4. **Charter** (task brief) — task-specific goal and DoD; may add, never relax
 
-An instruction lives in exactly ONE home. Other homes may reference an
-anchor by ID (B1–B6); they must never restate it. Adding an anchor deletes
-its equivalents elsewhere in the same change.
+One normative home per rule; join-point copies cite it by ID and never
+restate its content. Adding an anchor deletes its equivalents elsewhere
+in the same change.
 
 ## Reading the anchors at boot
 
-A boot that has not read this file is not complete. Boot bodies in
-the instruction bodies (`control-plane-instructions.md`, `worker-instructions.md`) inline the table above; sessions re-derive nothing.
+A boot that has not read this file is not complete. Boot bodies read the
+table in full; sessions re-derive nothing.
 
 ## What is deliberately NOT binding (guidance)
 

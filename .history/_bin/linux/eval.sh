@@ -140,7 +140,7 @@ bash "$BIN/chain.sh" verify "_selftest/eval-chain" 2>/dev/null | grep -q 'CHAIN-
   && ok "13b chain catches a tampered CLOSE entry" \
   || bad "13b chain did not catch the tamper"
 
-# 14: watcher test-mode (empty diff silent, non-empty noticed)
+# 14: runner one cycle (empty diff silent, non-empty noticed)
 mkdir -p ".history/2026-11-11-evalwatch"
 printf '2026-11-11 10:00 — worker: executing\n' > ".history/2026-11-11-evalwatch/worklog.md"
 printf '%s\n' \
@@ -150,10 +150,10 @@ printf '%s\n' \
   > ".history/2026-11-11-evalwatch/workers.md"
 bash "$BIN/tick.sh" --plane --diff >/dev/null 2>&1
 printf '2026-11-11 10:05 — probe change\n' >> ".history/2026-11-11-evalwatch/worklog.md"
-printf '.history/2026-11-11-evalwatch/worklog.md\n' | PLANE_WATCH_DEBOUNCE=1 bash "$BIN/plane-watch.sh" . --test-mode >/dev/null 2>&1
-grep -q 'non-empty diff' .history/_watcher.log \
-  && ok "14 watcher notices a non-empty diff in test mode" \
-  || bad "14 watcher missed the non-empty diff"
+bash "$BIN/runner.sh" >/dev/null 2>&1
+grep -q 'non-empty diff' .history/_runner.log \
+  && ok "14 runner notices a non-empty diff in one cycle" \
+  || bad "14 runner missed the non-empty diff"
 
 # 15: Stop hook signals only at phase end
 mkdir -p ".history/2026-11-11-evalstop"
@@ -174,32 +174,21 @@ grep -q '"slug":"evalstop"' .history/._events.log \
   && ok "15b Stop hook signals at phase end" \
   || bad "15b Stop hook did not signal at phase end"
 
-# 16: backstop restarts a dead watcher (stubbed inotifywait)
-mkdir -p "$EVAL_ROOT/fakebin"
-printf '#!/bin/sh\nsleep 300\n' > "$EVAL_ROOT/fakebin/inotifywait"; chmod +x "$EVAL_ROOT/fakebin/inotifywait"
-(cd "$PROJ" && PATH="$EVAL_ROOT/fakebin:$PATH" bash "$BIN/plane-poll.sh" >/dev/null 2>&1)
-wpid1="$(sed -n 's/^pid=//p' .history/._watcher_state 2>/dev/null)"
-kill "$wpid1" 2>/dev/null; sleep 1
-(cd "$PROJ" && PATH="$EVAL_ROOT/fakebin:$PATH" bash "$BIN/plane-poll.sh" >/dev/null 2>&1)
-for _i in 1 2 3 4 5; do
-  wpid2="$(sed -n 's/^pid=//p' .history/._watcher_state 2>/dev/null)"
-  [ -n "$wpid2" ] && [ "$wpid2" != "$wpid1" ] && kill -0 "$wpid2" 2>/dev/null && break
-  sleep 1
-done
-[ -n "$wpid2" ] && [ "$wpid2" != "$wpid1" ] && kill -0 "$wpid2" 2>/dev/null \
-  && ok "16 backstop restarts a dead watcher" \
-  || bad "16 backstop did not restart the watcher"
-kill "$wpid2" 2>/dev/null || true
-# 11-18 fix: no watcher (or its event-source subshell) may outlive scenario 16.
-sleep 1 # let the watcher EXIT trap reap the event-source tree
+# 16: runner runs one cycle and exits — no long-running process to restart
+(cd "$PROJ" && bash "$BIN/runner.sh" >/dev/null 2>&1)
+[ $? -eq 0 ] \
+  && ok "16 runner runs one cycle and exits 0" \
+  || bad "16 runner did not exit cleanly"
+# 11-18 fix: no runner (or its subshell) may outlive scenario 16.
+sleep 1 # let the cycle's processes finish
 leak=0
-for _p in $(pgrep -f 'plane-watch\.sh' 2>/dev/null); do
+for _p in $(pgrep -f 'runner\.sh' 2>/dev/null); do
   _c=$(readlink "/proc/$_p/cwd" 2>/dev/null || true)
   case "$_c" in "$PROJ"*) leak=1 ;; esac
 done
 [ "$leak" = 0 ] \
-  && ok "16b no watcher processes leak from scenario 16" \
-  || bad "16b watcher processes leaked (cwd under $PROJ)"
+  && ok "16b no runner processes leak from scenario 16" \
+  || bad "16b runner processes leaked (cwd under $PROJ)"
 
 # 17: governance templates
 grep -q '^\- \*\*Risk\*\*' .history/_templates/brief.template.md \
@@ -466,21 +455,22 @@ grep -q 'boardScroll' .history/board.html \
   && ok "31d scroll-restore snippet present" \
   || bad "31d scroll-restore snippet missing"
 
-# 32: watcher regenerates the static board.html after a non-empty diff (v6 track G)
+# 32: runner regenerates the static board.html after a non-empty diff (v6 track G)
 printf 'SENTINEL-OLD-BOARD\n' > .history/board.html
 printf '2026-11-11 10:10 — probe change for board regen\n' >> .history/2026-11-11-evalwatch/worklog.md
-printf '.history/2026-11-11-evalwatch/worklog.md\n' | PLANE_WATCH_DEBOUNCE=1 bash "$BIN/plane-watch.sh" . --test-mode >/dev/null 2>&1
-grep -q 'board regenerated' .history/_watcher.log \
+bash "$BIN/runner.sh" >/dev/null 2>&1
+grep -q 'board regenerated' .history/_runner.log \
   && ! grep -q 'SENTINEL-OLD-BOARD' .history/board.html \
   && grep -q 'data-cat="decision"' .history/board.html \
-  && ok "32 watcher regenerates board.html after a non-empty diff" \
-  || bad "32 watcher did not regenerate board.html"
+  && ok "32 runner regenerates board.html after a non-empty diff" \
+  || bad "32 runner did not regenerate board.html"
+printf '<!-- board-only touch -->\n' >> .history/board.html
 cp .history/board.html "$EVAL_ROOT/board-after-regen.html"
-printf '.history/board.html\n' | PLANE_WATCH_DEBOUNCE=1 bash "$BIN/plane-watch.sh" . --test-mode >/dev/null 2>&1
-grep -q 'empty diff — no wake' .history/_watcher.log \
+bash "$BIN/runner.sh" >/dev/null 2>&1
+tail -5 .history/_runner.log | grep -q 'empty diff — no wake' \
   && cmp -s .history/board.html "$EVAL_ROOT/board-after-regen.html" \
-  && ok "32b board.html-only event: empty diff, no regen, no wake loop" \
-  || bad "32b board.html write re-triggered the watcher"
+  && ok "32b board.html-only change: empty diff, no regen, no wake loop" \
+  || bad "32b board.html write re-triggered the runner"
 
 # 33: plane lock holder parsing (v6 track H) — malformed lock must not read
 # a timestamp as holder; stale takeover still works, new line well-formed
@@ -513,7 +503,7 @@ bash "$BIN/init.sh" >/dev/null 2>&1
   || bad "34b init re-run did not restore the skill dir or overwrote an adopted file"
 
 # 35: /shutdown (v6.1) — plane-only command, marker denied to workers,
-# watcher/poller stop on the marker, release flow
+# runner stop on the marker, release flow
 [ -f .agent/commands/shutdown.md ] && [ -f .claude/commands/shutdown.md ] \
   && grep -q 'shutdown.sh' .agent/commands/shutdown.md \
   && ok "35 shutdown command present in the package and mapped to .claude/" \
@@ -533,19 +523,18 @@ printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/.history/SHUTDOWN.md"}
   | WORKFLOW_ROLE=plane bash .claude/hooks/domain-guard.sh >/dev/null 2>&1 \
   && ok "35d hook allows the plane to write the shutdown marker" \
   || bad "35d hook blocked the plane's shutdown marker write"
-# watcher exits on the stop marker (test mode; reuses the evalwatch task dir)
+# runner exits on the stop marker (reuses the evalwatch task dir)
 touch .history/._watcher_stop
-printf '.history/2026-11-11-evalwatch/worklog.md\n' | PLANE_WATCH_DEBOUNCE=1 bash "$BIN/plane-watch.sh" . --test-mode >/dev/null 2>&1
-[ $? -eq 0 ] && grep -q 'stop marker present' .history/_watcher.log \
-  && ok "35e watcher exits on the stop marker" \
-  || bad "35e watcher did not exit on the stop marker"
-# plane-poll exits on the stop marker (no tick, no scans, no watcher restart)
-rm -f .history/._watcher_state
-rm -rf .history/._poll_schedule
-(cd "$PROJ" && bash "$BIN/plane-poll.sh" --stale-now --relays-now >/dev/null 2>&1)
-[ $? -eq 0 ] && [ ! -d .history/._poll_schedule ] && [ ! -f .history/._watcher_state ] \
-  && ok "35f plane-poll exits on the stop marker (no scans, no watcher restart)" \
-  || bad "35f plane-poll did not exit cleanly on the stop marker"
+(cd "$PROJ" && bash "$BIN/runner.sh" >/dev/null 2>&1)
+[ $? -eq 0 ] && grep -q 'stop marker present' .history/_runner.log \
+  && ok "35e runner exits on the stop marker" \
+  || bad "35e runner did not exit on the stop marker"
+# runner exits on the stop marker (no tick, no scans, no state dir)
+rm -rf .history/._runner_state
+(cd "$PROJ" && bash "$BIN/runner.sh" --stale-now --relays-now >/dev/null 2>&1)
+[ $? -eq 0 ] && [ ! -d .history/._runner_state ] \
+  && ok "35f runner exits on the stop marker (no scans, no state dir)" \
+  || bad "35f runner did not exit cleanly on the stop marker"
 rm -f .history/._watcher_stop
 # worker release flow on the shutdown signal (fixture task dir)
 mkdir -p .history/2026-11-11-evalshutdown
@@ -639,8 +628,8 @@ sleep 1
 WORKFLOW_ROOT="$PROJ" DECLARE_ROLE_PID="$regpid" bash "$BIN/declare-role.sh" worker evalreg >/dev/null 2>&1
 [ -f ".history/_sessions/$regpid" ] \
   && grep -qx 'role=worker' ".history/_sessions/$regpid" \
-  && grep -qx 'slug=evalreg' ".history/_sessions/$regpid" \
-  && ok "38b declare-role.sh writes role=worker slug=evalreg for the injected pid" \
+  && grep -qx 'slug=2026-11-11-evalreg' ".history/_sessions/$regpid" \
+  && ok "38b declare-role.sh writes role=worker slug=2026-11-11-evalreg for the injected pid (v6.5: the resolved full slug is registered)" \
   || bad "38b declare-role.sh did not write the registry entry"
 reghook() { # reghook <pid> <file> <cwd> — hook exit code with HOOK_AGENT_PID, no role env vars
   printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"},"cwd":"%s"}' "$2" "$3" \

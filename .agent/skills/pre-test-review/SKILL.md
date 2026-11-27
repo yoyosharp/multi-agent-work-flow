@@ -1,6 +1,6 @@
 ---
 name: pre-test-review
-description: §3.1 pre-test gate review — independent review of one task's impl diff, before tests exist. Args: <task-slug> <base>..<head> [effort=low|medium|high]. Appends findings to the task's review.md per protocol. Spawned by the control plane, or invoked directly for an ad-hoc audit.
+description: §3.1 pre-test gate review — independent review of one task's impl diff, before tests exist. Args: <task-slug> <base>..<head> [effort=low|medium|high]. Appends findings to the task's review.md per protocol. Spawned by the control plane, or invoked directly by the human for an ad-hoc audit (human-only — a worker invoking it would dispatch a review sub-agent, which the forbid rule prohibits).
 ---
 
 # Pre-test review gate (§3.1)
@@ -22,7 +22,7 @@ fixer: you never edit code outside that file.
 1. `review.md` tail (if the file exists): highest `Fn` used — never reuse
    a number; findings already RESOLVED/DROPPED — never re-raise one
    (a regression of an old finding gets a NEW Fn referencing the old).
-2. `brief.md` (charter) + plan doc linked from TASK_LIST — these are the
+2. `brief.md` (charter) + plan.md linked from TASK_LIST — these are the
    requirements. Deviations = findings unless the brief itself justifies them.
 3. The diff itself: `git log --oneline <base>..<head>`, then the full diff
    in the task's worktree (read-only). Verify every finding against a hunk
@@ -87,6 +87,9 @@ a finding without a line is not a finding.**
 
 ## Guards
 
+- Writable file: the task review.md (your findings + pass marker only).
+  Everything else is read-only.
+- You are plane-spawned (or human-invoked for an ad-hoc audit); a worker never dispatches §3.1 (or plan-review / test-result-review) — those sub-agents are plane-owned.
 - Read-only checkout: no working-tree/index/HEAD/branch mutation; no
   `git worktree add`, no checkouts.
 - No subagent spawns, no second reviewer, no self-fixing.

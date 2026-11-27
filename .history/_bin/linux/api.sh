@@ -6,7 +6,9 @@
 # adapted during work (auth-flow/base/envelope changes land in the config,
 # never in this script). Per-task overrides: .history/<slug>/mt-config.env.
 # Every call logs verbatim (request + raw response) to the task's evidence
-# file. Sessions + saved bodies stay in the task dir, ONE FILE PER ACCOUNT
+# file. Evidence format is shared with evidence.sh (log_entry/log_resp) —
+# the same evidence format, two allowlisted paths; a format change lands
+# in both. Sessions + saved bodies stay in the task dir, ONE FILE PER ACCOUNT
 # (repeated same-account logins kick earlier sessions — single-session-
 # per-user design; never share login creds with a human UI).
 #
@@ -39,7 +41,7 @@ fi
 . "$CFG"
 
 EVID_NAME="evidence-api.md"
-MT_ACCOUNTS=""
+MT_ACCOUNTS=""  # reset is deliberate — accounts are per-task only; mt-config.env, sourced next, may set it
 [ -f "$TASK/mt-config.env" ] && . "$TASK/mt-config.env"
 
 BASE="${MT_BASE:-${MT_BASE_DEFAULT:-}}"

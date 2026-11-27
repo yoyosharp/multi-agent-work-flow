@@ -45,6 +45,7 @@ repository exploration. **How:** Append a short handoff to `worklog.md` with:
 On resume, the worker reads this handoff first, verifies the named pointers
 against the current diff, and continues from the next action. It repeats
 discovery only when the handoff is missing, stale, or contradicted by artifacts.
+`.agent/` records are retained with the task's `.history/` (no separate expiry).
 
 ## 3. Control-plane summary
 

@@ -10,6 +10,11 @@ control plane ratifies and curates status inline (its non-append write).
 
 <!--
 Status values: DECLARED → GRANTED / DENIED → EXECUTING → RELEASED · STALE · CHALLENGED · REVOKED
+- Worker = the worker's display label: default is the task short (the slug
+  minus its `YYYY-MM-DD-` prefix); the plane may override it via the
+  `/worker <slug> [label]` argument. The plane names workers by label in
+  all human-facing messages, never by claim-row number. An empty Worker
+  cell falls back to the task short.
 - Worker writes its row at launch (DECLARED), flips to EXECUTING after its
   first write and to RELEASED at DONE + report. The control plane flips
   GRANTED / DENIED (reason in Notes, including method-mismatch) / STALE /

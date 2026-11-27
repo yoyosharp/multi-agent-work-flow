@@ -8,7 +8,7 @@ slug=${1%/}
 d=".history/$slug"
 [ -d "$d" ] || { echo "no task dir $d"; exit 1; }
 t=.history/_templates
-for f in workers qa review worklog inbox; do
+for f in workers qa review worklog inbox plan; do
   if [ ! -f "${d}/${f}.md" ]; then
     sed "s/<task-slug>/$slug/; s/<YYYY-MM-DD>-<slug>/$slug/g" "${t}/${f}.template.md" > "${d}/${f}.md"
     echo "seeded ${f}.md"

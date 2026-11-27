@@ -5,7 +5,8 @@
 # gitignore, pointer block, seed TASK_LIST, instantiate api-config). v6
 # makes it a script: deterministic, idempotent, receipted. The
 # workflow-init skill invokes this script and then does the parts that
-# need judgement (fill api-config values, adoption checklists, wake).
+# need judgement (fill api-config values, adoption checklists, runner
+# registration).
 #
 # Usage: init.sh [project-root] [--check-only]
 #   project-root defaults to the repo containing this script.
@@ -24,8 +25,8 @@
 #   and no writes.
 #   soft — recorded in the receipt, install continues degraded: python3
 #   (hook + board.sh), claude CLI + version (verified floor 2.1.150,
-#   compared with python3 when available), tmux, inotifywait (linux) /
-#   fswatch (mac) for the v6 watcher, hook script + settings.json wiring
+#   compared with python3 when available), tmux, the runner's scheduler
+#   (cron on Linux/mac), hook script + settings.json wiring
 #   (functional smoke test, not just file presence). A machine below the
 #   soft floor gets a degraded install with the receipt saying so — never
 #   a silent partial install.
@@ -36,7 +37,7 @@
 # exit 1 = hard floor failed or a write failed.
 #
 # Shared with mac/ (keep in sync); the only platform branch is the
-# watcher-tool name. Windows has init.ps1 (same steps, untested here).
+# scheduler name. Windows has init.ps1 (same steps, untested here).
 set -u
 
 ROOT="${1:-}"
@@ -51,7 +52,6 @@ fi
 BIN="$(cd "$(dirname "$0")" && pwd -P)"
 PKG_TEMPLATES="$(cd "$(dirname "$0")/../../_templates" 2>/dev/null && pwd -P)"
 PLATFORM="linux"; [ "$(uname -s)" = "Darwin" ] && PLATFORM="mac"
-WATCH_TOOL="inotifywait"; [ "$PLATFORM" = "mac" ] && WATCH_TOOL="fswatch"
 
 created=""; kept=""; flagged=""; degraded=""
 note_created() { created="$created
@@ -75,11 +75,11 @@ if [ -z "$hard_fail" ]; then
 fi
 # package templates: the live _templates/ or the package's own dir beside
 # this script (a package run against a separate live repo). Either
-# location must hold all three; a partial copy aborts loudly instead of
-# installing without /grill support.
+# location must hold all four; a partial copy aborts loudly instead of
+# installing without /grill support or the plan gate.
 TPL_OK=""
 for tdir in "$ROOT/.history/_templates" "$PKG_TEMPLATES"; do
-  if [ -f "$tdir/TASK_LIST.template.md" ] && [ -f "$tdir/api-index.template.md" ] && [ -f "$tdir/intake.template.md" ]; then
+  if [ -f "$tdir/TASK_LIST.template.md" ] && [ -f "$tdir/api-index.template.md" ] && [ -f "$tdir/intake.template.md" ] && [ -f "$tdir/plan.template.md" ]; then
     TPL_OK="$tdir"; break
   fi
 done
@@ -100,14 +100,14 @@ if command -v claude >/dev/null 2>&1; then
     echo "  note: claude $ver — version floor not compared (no python3)"
   fi
 else
-  note_degraded "claude CLI not found — hooks cannot fire; workflow runs as v5.3 (polling only) until a supported CLI is installed"
+  note_degraded "claude CLI not found — hooks cannot fire; workflow runs polling-only until a supported CLI is installed"
 fi
 command -v tmux >/dev/null 2>&1 \
-  && echo "  ok: tmux present (watcher wake path available)" \
-  || note_degraded "tmux missing — event-driven wake (track A) unavailable; polling backstop only"
-command -v "$WATCH_TOOL" >/dev/null 2>&1 \
-  && echo "  ok: $WATCH_TOOL present (watcher available)" \
-  || note_degraded "$WATCH_TOOL missing — file watcher (track A) unavailable; polling backstop only"
+  && echo "  ok: tmux present (plane session host)" \
+  || note_degraded "tmux missing — no tmux session host; the runner (cron, every 3 min) is the wake"
+command -v crontab >/dev/null 2>&1 \
+  && echo "  ok: crontab present (runner scheduling available)" \
+  || note_degraded "crontab missing — the runner cannot be scheduled; run runner.sh by hand on a timer or another trigger"
 [ -f "$ROOT/.history/_bin/$PLATFORM/server.sh" ] \
   && echo "  ok: server.sh present (server lifecycle available)" \
   || note_degraded "server.sh missing — server lifecycle (track F) unavailable; manual-test workers cannot stop their server"
@@ -125,7 +125,6 @@ fi
 # is present — .agent on a fresh package copy, .claude once installed.
 AGENT_SRC="$ROOT/.agent"; [ -d "$AGENT_SRC" ] || AGENT_SRC="$ROOT/.claude"
 HOOK="$AGENT_SRC/hooks/domain-guard.sh"
-hook_ok=0
 if [ -f "$HOOK" ] && grep -q 'PreToolUse' "$AGENT_SRC/settings.json" 2>/dev/null; then
   # functional smoke test, not just file presence (synthetic PreToolUse stdin;
   # the hook never touches the filesystem for these paths, so no fixture dir)
@@ -136,13 +135,13 @@ if [ -f "$HOOK" ] && grep -q 'PreToolUse' "$AGENT_SRC/settings.json" 2>/dev/null
         | WORKFLOW_ROOT="$ROOT" WORKFLOW_ROLE=worker WORKFLOW_SLUG=__init_probe__ bash "$HOOK" 2>/dev/null; then
       note_degraded "hook smoke test failed — hook allowed an out-of-domain edit; hooks inert until fixed"
     else
-      hook_ok=1; echo "  ok: hook smoke test passed (allows in-domain, blocks out-of-domain)"
+      echo "  ok: hook smoke test passed (allows in-domain, blocks out-of-domain)"
     fi
   else
     note_degraded "hook smoke test failed — hook blocked an in-domain edit; hooks inert until fixed"
   fi
 else
-  note_degraded "hook or settings.json wiring missing — hooks inert; workflow runs as v5.3 until wired"
+  note_degraded "hook or settings.json wiring missing — hooks inert; workflow runs polling-only until wired"
 fi
 
 if [ -n "$hard_fail" ]; then echo "INIT-ABORTED: $hard_fail" >&2; exit 1; fi
@@ -189,7 +188,15 @@ if [ -f "$BIN/declare-role.sh" ] && [ ! -f "$ROOT/.history/_bin/$PLATFORM/declar
     && note_created ".history/_bin/$PLATFORM/declare-role.sh (from package)"
 fi
 
-# --- mode ----------------------------------------------------------------
+# --- new-script sync (v6.5): same never-overwrite delivery for the
+# scripts a package upgrade adds (claim-rows.sh, runner.sh, wake.sh).
+for s in claim-rows.sh runner.sh wake.sh; do
+  if [ -f "$BIN/$s" ] && [ ! -f "$ROOT/.history/_bin/$PLATFORM/$s" ]; then
+    mkdir -p "$ROOT/.history/_bin/$PLATFORM"
+    cp "$BIN/$s" "$ROOT/.history/_bin/$PLATFORM/$s" \
+      && note_created ".history/_bin/$PLATFORM/$s (from package)"
+  fi
+done
 MODE="fresh"
 [ -f "$ROOT/.history/TASK_LIST.md" ] && MODE="existing"
 echo "== init ($MODE) — $ROOT"
@@ -198,7 +205,7 @@ echo "== init ($MODE) — $ROOT"
 mkdir -p "$ROOT/.history" "$ROOT/.worktree" "$ROOT/.history/_bin" "$ROOT/.history/_templates" "$ROOT/.history/_pending" "$ROOT/.history/_sessions"
 note_kept ".history/ + .worktree/ dirs present"
 # scripts ship non-executable in the package (zip loses +x), so status.sh /
-# plane-poll.sh fail calling siblings directly on a fresh extract — make
+# runner.sh fail calling siblings directly on a fresh extract — make
 # this platform's scripts and the hook executable here, at install time.
 chmod +x "$ROOT/.history/_bin/$PLATFORM/"*.sh 2>/dev/null
 [ -f "$ROOT/.agent/hooks/domain-guard.sh" ] && chmod +x "$ROOT/.agent/hooks/domain-guard.sh" 2>/dev/null
@@ -367,7 +374,7 @@ RECEIPT="$ROOT/.history/_init_receipt.md"
   echo "## next steps"
   echo "- fill .history/_bin/api-config.env <...> values (only if this project uses api.sh — otherwise leave the template), then run api.sh login smoke test"
   echo "- fill any <...> placeholders left in the installed specs (or migrate flagged adapted rules by hand)"
-  echo "- register the plane wake (plane-poll.sh at HOT_RATE) and run selftest.sh — expect SELFTEST-PASS"
+  echo "- register the runner (cron, every 3 min — runner.sh install) and run selftest.sh — expect SELFTEST-PASS"
   echo "- live-probe the hook once (headless out-of-domain edit must block) if this machine's CLI version was never probed"
 } > "$RECEIPT"
 
@@ -377,5 +384,5 @@ echo "kept:$kept"
 [ -n "$flagged" ] && echo "flagged:$flagged"
 [ -n "$degraded" ] && echo "degraded:$degraded"
 echo "receipt: .history/_init_receipt.md"
-echo "next: fill api-config.env (only if this project uses api.sh), fill <...> placeholders, register plane wake, run selftest.sh"
+echo "next: fill api-config.env (only if this project uses api.sh), fill <...> placeholders, register the runner (runner.sh install), run selftest.sh"
 exit 0

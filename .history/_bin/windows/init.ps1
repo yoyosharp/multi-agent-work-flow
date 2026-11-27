@@ -35,7 +35,7 @@ if ($hardFail -eq "") {
 $pkgTemplates = Join-Path $PSScriptRoot "..\..\_templates"
 $tplOk = ""
 foreach ($td in @("$Root\.history\_templates", $pkgTemplates)) {
-  if ((Test-Path "$td\TASK_LIST.template.md") -and (Test-Path "$td\api-index.template.md") -and (Test-Path "$td\intake.template.md")) { $tplOk = $td; break }
+  if ((Test-Path "$td\TASK_LIST.template.md") -and (Test-Path "$td\api-index.template.md") -and (Test-Path "$td\intake.template.md") -and (Test-Path "$td\plan.template.md")) { $tplOk = $td; break }
 }
 if ($tplOk -ne "") { "  ok: package templates present" }
 else { $hardFail = "package templates missing under $Root\.history\_templates (incomplete package copy)" }
@@ -62,9 +62,9 @@ if ($Harness -eq "claude") {
 } elseif ((Test-Path "$Root\AGENTS.md") -and (Select-String -Path "$Root\AGENTS.md" -Pattern "workflow-pointer: v6 begin" -Quiet)) {
   "  ok: Codex AGENTS.md entrypoint present"
 } else { Add-Degraded "AGENTS.md Codex entrypoint missing — Codex will not load this workflow automatically" }
-if (Get-Command tmux -ErrorAction SilentlyContinue) { "  ok: tmux present (watcher wake path available)" }
-else { Add-Degraded "tmux missing — event-driven wake (track A) unavailable; polling backstop only" }
-Add-Degraded "no file-watcher tool on Windows yet (track A Windows variant pending); polling backstop only"
+if (Get-Command tmux -ErrorAction SilentlyContinue) { "  ok: tmux present (plane session host)" }
+else { Add-Degraded "tmux missing — no tmux wake path; the runner (Task Scheduler, every 3 min) is the wake" }
+Add-Degraded "no file-watcher tool on Windows — the periodic runner (Task Scheduler, every 3 min) is the wake; register it before declaring boot complete"
 if (Test-Path "$Root\.history\_bin\windows\server.ps1") { "  ok: server.ps1 present (server lifecycle available)" }
 else { Add-Degraded "server.ps1 missing — server lifecycle (track F) unavailable" }
 if ((Test-Path "$Root\.history\_bin\windows\declare-role.ps1") -or (Test-Path (Join-Path $PSScriptRoot "declare-role.ps1"))) { "  ok: declare-role.ps1 present (session-declared roles available)" }
@@ -75,7 +75,6 @@ else { $hardFail = "declare-role.ps1 missing under $Root\.history\_bin\windows\ 
 # is present — .agent on a fresh package copy, .claude once installed.
 $agentSrc = if (Test-Path "$Root\.agent") { "$Root\.agent" } else { "$Root\.claude" }
 $hook = "$agentSrc\hooks\domain-guard.sh"
-$hookOk = $false
 if ($Harness -eq "codex") {
   Add-Degraded "Claude PreToolUse hook is not Codex enforcement; Codex domain/process gates are not included"
 } elseif ((Test-Path $hook) -and (Select-String -Path "$agentSrc\settings.json" -Pattern "PreToolUse" -Quiet)) {
@@ -85,10 +84,10 @@ if ($Harness -eq "codex") {
     '{"tool_name":"Edit","tool_input":{"file_path":"' + "$wt\src\X.java" + '"},"cwd":"' + $wt + '"}' | & bash $hook 2>$null; $rcIn = $LASTEXITCODE
     '{"tool_name":"Edit","tool_input":{"file_path":"' + "$Root\README.md" + '"},"cwd":"' + $Root + '"}' | & bash $hook 2>$null; $rcOut = $LASTEXITCODE
     Remove-Item Env:\WORKFLOW_ROOT, Env:\WORKFLOW_ROLE, Env:\WORKFLOW_SLUG -ErrorAction SilentlyContinue
-    if (($rcIn -eq 0) -and ($rcOut -eq 2)) { $hookOk = $true; "  ok: hook smoke test passed (allows in-domain, blocks out-of-domain)" }
+    if (($rcIn -eq 0) -and ($rcOut -eq 2)) { "  ok: hook smoke test passed (allows in-domain, blocks out-of-domain)" }
     else { Add-Degraded "hook smoke test failed (in=$rcIn out=$rcOut) — hooks inert until fixed" }
   } else { Add-Degraded "hook smoke test skipped — no bash on this machine; verify the hook on a bash host" }
-} else { Add-Degraded "hook or settings.json wiring missing — hooks inert; workflow runs as v5.3 until wired" }
+} else { Add-Degraded "hook or settings.json wiring missing — hooks inert; workflow runs polling-only until wired" }
 
 if ($hardFail -ne "") { "INIT-ABORTED: $hardFail" | Out-String; exit 1 }
 if ($CheckOnly) {
@@ -119,6 +118,15 @@ if (($tplOk -ne "") -and ($tplOk -ne "$Root\.history\_templates")) {
     if (-not (Test-Path "$Root\.history\_templates\$($t.Name)")) {
       Copy-Item $t.FullName "$Root\.history\_templates\$($t.Name)"; Add-Created ".history\_templates\$($t.Name) (new template from package)"
     }
+  }
+}
+
+# --- new-script sync (v6.5): same never-overwrite delivery for the
+# scripts a package upgrade adds (claim-rows.ps1, runner.ps1).
+foreach ($s in @("claim-rows.ps1","runner.ps1")) {
+  if ((Test-Path (Join-Path $PSScriptRoot $s)) -and (-not (Test-Path "$Root\.history\_bin\windows\$s"))) {
+    New-Item -ItemType Directory -Force -Path "$Root\.history\_bin\windows" | Out-Null
+    Copy-Item (Join-Path $PSScriptRoot $s) "$Root\.history\_bin\windows\$s"; Add-Created ".history\_bin\windows\$s (from package)"
   }
 }
 
@@ -305,7 +313,7 @@ $floorLine = "hard floor met" + $(if ($degraded.Count -gt 0) { "; soft gaps:`n" 
 "## next steps",
 "- fill .history\_bin\api-config.env <...> values (only if this project uses api.sh — otherwise leave the template), then run api.sh login smoke test",
 "- fill any <...> placeholders left in the installed specs (or migrate flagged adapted rules by hand)",
-"- register the plane wake (plane-poll.ps1 at HOT_RATE) and run selftest.ps1 — expect SELFTEST-PASS",
+"- register the runner (Task Scheduler, every 3 min) and run selftest.ps1 — expect SELFTEST-PASS",
 "- live-probe the hook once (headless out-of-domain edit must block) if this machine's CLI version was never probed"
 ) | Set-Content -Path $receipt
 
@@ -315,5 +323,5 @@ $floorLine = "hard floor met" + $(if ($degraded.Count -gt 0) { "; soft gaps:`n" 
 if ($flagged.Count -gt 0) { "flagged:"; $flagged }
 if ($degraded.Count -gt 0) { "degraded:"; $degraded }
 "receipt: .history\_init_receipt.md"
-"next: fill api-config.env (only if this project uses api.sh), fill <...> placeholders, register plane wake, run selftest.ps1"
+"next: fill api-config.env (only if this project uses api.sh), fill <...> placeholders, register the runner, run selftest.ps1"
 exit 0

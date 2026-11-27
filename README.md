@@ -1,14 +1,17 @@
-# Set-up v6.4 — anchors-based control-plane / parallel-agents workflow
+# Set-up v6.5 — anchors-based control-plane / parallel-agents workflow
 
 **Self-contained**: everything needed ships inside this folder, whatever it
-is named. Copy its contents into any project root and the workflow runs —
-no external references. `AGENTS.md` is the Codex entrypoint; `.agent/` is the package agent-config dir
+is named. Get the template from where the user says (a URL → clone; a
+local path → copy) and adopt it into any project root — no external
+references. `AGENTS.md` is the Codex entrypoint; `.agent/` is the package agent-config dir
 (mapped to `.claude/` on Claude Code) and optional Claude Code integration.
 
 ```
-cp -r <this-folder>/. <target-project>/   # merges AGENTS.md, docs/workflow/, .history/, .agent/ (the harness maps .agent/ to its own agent-config dir at adoption — .claude/ on Claude Code)
+git clone <WORKFLOW_REPO_URL> .workflow   # URL → nested clone (ignored via /.workflow/ in .gitignore, never committed)
+# or: cp -r <local-template>/. <target-project>/   # local path → copy
 ```
 
+**What makes this v6.5**: the plan gate (a fourth gate file, `plan.md`, with mutual agreement between plane and worker — plane CLEAN for a rev plus the worker's rev-cited acceptance), the periodic runner (one 3-min cycle replacing the watcher + poll backstop), and the audit consolidation (a 45-item core spec, one shared claim-row parser, buried rules promoted into the checklists that execute them).
 **What makes this v6**: binding lives in behavioral anchors with mechanical
 evidence (`docs/workflow/anchors.md` + the `closecheck anchors` gate), not
 in document text. Skills, plans, and process methodology are guidance.
@@ -36,22 +39,24 @@ line-count check enforces the cap.
     reports, control-plane summaries, token-usage guidance), `metrics.md`
     (the metrics dictionary — every cited number carries its recompute
     command, date, scope, and limits), and the permission grant template
-    (`permissions-manifest.md`). Any harness
+    (`permissions-manifest.md`). The branched duty files
+    (`verify-duties.md`, `worker-close.md`), the minimal binding spec
+    (`core-spec.md`), the frozen key map (`keys.md`), and the delivery
+    checklist (`delivery.md`) live here too. Any harness
     loads these; nothing here assumes Claude Code.
 - **`.history/_templates/`** — scaffold seeds (task index, workers ledger,
-  brief, worklog, Q&A, review gate) plus `api-config.template.env` — the
-  project API scaffold template the control plane instantiates to
-  `.history/_bin/api-config.env` at init and keeps adapted during work (the
-  `api.sh`/`evidence.sh` scripts themselves are project-neutral). The brief
+  brief, worklog, Q&A, review gate, plan gate, intake doc) plus `api-config.template.env` — the
+  project API scaffold template (see `ADOPT.md` §3 step 6 for the
+  conditional fill). The brief
   template carries the `binding: anchors B1–B6` line. Task-dir files are
   copied from these; templates always install with clean, example-free
   tables.
 - **`.history/_bin/`** — fixed workflow scripts, one folder per platform
   (`linux/ mac/ windows/`; bash + bash-BSD + PowerShell 5+). Same
-  inventory everywhere: plane-poll, plane-watch, tick, lock, status, relays, stale,
+  inventory everywhere: runner, tick, lock, status, relays, stale,
   closecheck, delivery, scaffold, init, api, evidence, selftest — one exact
   allowlisted invocation each (see `.history/_bin/README.md` and the
-  [polling rules](docs/workflow/async-inputs.md#1-poll-for-changes));
+  [polling rules](docs/workflow/async-inputs.md));
   `board.sh` (linux/mac) gives the human the Board v2 UI tracker of
   `.history/` (v6.4): an overview (pulse tiles, gates-only inbox, fleet
   matrix of tasks × the 14 phases, live tasks with mini-steppers, plane
@@ -60,7 +65,7 @@ line-count check enforces the cap.
   gate nodes, delivery-prerequisites checklist, rendered docs tabs,
   Compact/All/Raw trace). One-shot mode is read-only; `board.sh serve`
   (localhost, regenerate-on-reload) additionally enables the gate
-  forms — Q&A answers, finding adjudications and the plan/WAIVE/
+  forms — Q&A answers, finding adjudications, plan decisions and the plan/WAIVE/
   final-review/delivery relays. **Board writes happen ONLY on an
   explicit Submit press** (typing is a local draft, no autosave), one
   Submit writes the whole batch, and a Submit is fill+release in one
@@ -91,7 +96,8 @@ line-count check enforces the cap.
   plane spawns reviewers with a one-line brief instead of retyping the
   protocol. Replace `<PROJECT_REVIEW_CHECKLIST>` on adoption.
   Harness-agnostic: the body is plain instruction text any reviewer agent
-  can be briefed with.
+  can be briefed with. `.agent/skills/requirements-grill/` is the
+  grilling interview (adapted from Matt Pocock's grill-me/grilling, MIT).
 - **`.agent/commands/`** — Claude Code convenience only: five thin slash
   triggers (`/control-plane`, `/worker [task-slug]`, `/shutdown` — plane-only
   coordinated graceful shutdown, `/grill <rough idea>` — Scoper, user-invoked
@@ -102,28 +108,23 @@ line-count check enforces the cap.
 
 ## Install
 
-1. Copy the contents of this folder into the target project root. Skip
+1. Get the template from where the user says (a URL → clone into
+   `.workflow/`; a local path → copy its contents into the target project
+   root). Skip
    `.agent/` entirely on non-Claude harnesses (or replace it with your
    harness's trigger layer pointing at `docs/workflow/*-instructions.md`;
    the pre-test-review skill body then travels as plain brief text).
-   On adoption, edit `.agent/skills/pre-test-review/SKILL.md` and
-   replace `<PROJECT_REVIEW_CHECKLIST>` with the project's failure modes.
+   On adoption, fill the per-project parameters (`ADOPT.md` §3 step 8:
+   the hook's intranet allowlist and `<PROJECT_REVIEW_CHECKLIST>`).
    **Re-install over an existing install (upgrade)**: don't blind-copy —
-   the running copy may already be *adopted* (checklists filled/deleted,
-   project values inlined) and may carry **local toolkit fixes** (the
-   `_bin/` scripts are patched in place when defects are found; a
-   blind-copy would revert them). Diff this package against the installed
-   copy, port only the semantic changes, and keep adopted values and newer
-   local fixes; after syncing, verify every adoption decision survives
-   (grep the installed specs for leftover `<…>` placeholders). Note the
-   installed copies may be untracked (gitignored) — they live only on that
-   machine.
+   see `ADOPT.md` §4 for the migration procedure (port, never blind-copy;
+   adopted values and local `_bin/` fixes are reverted by a blind copy).
 2. **Check permissions against the manifest** —
    `docs/workflow/permissions-manifest.md` lists the capabilities the
    plane/worker sessions need (discovery reads, wall-clock/mtimes, git
    reads, `.history/` writes, read-only process liveness, host:pid
    identity) plus the exact script invocations worth pre-granting
-   (plane-poll, tick, closecheck both modes, delivery, and — for
+   (runner, tick, closecheck both modes, delivery, and — for
    manual-test tasks — api/evidence). Grant them through the harness's
    native mechanism; the manifest ships no per-harness syntax on purpose.
    Process control (kill) is deliberately not granted — the zombie-kill
@@ -132,7 +133,9 @@ line-count check enforces the cap.
    TASK_LIST.md means boot #1. Claude Code invokes the `workflow-init`
    skill (`.agent/skills/workflow-init/SKILL.md`). In Codex on Windows, follow
    `AGENTS.md` and run the platform's `init` script directly (Windows:
-   `.history/_bin/windows/init.ps1 -Harness codex`). Both paths run the
+   `.history/_bin/windows/init.ps1 -Harness codex` — the `-Harness` flag
+   takes the (harness, kernel) pair, `claude` or `codex`, never a hardcoded
+   default). Both paths run the
    pre-install floor check first (`init.sh --check-only`, or Windows
    `init.ps1 -Harness codex -CheckOnly`); a hard-floor failure stops the
    init with no writes. Then run the platform init (`init.sh` or
@@ -143,24 +146,25 @@ line-count check enforces the cap.
    `.history/_bin/api-config.env` from the template. Follow each spec's
    adoption checklist (fill `<…>` placeholders, delete checklist blocks)
    and run the platform-appropriate API login smoke test. Init is idempotent and receipted
-   (`.history/_init_receipt.md`); on an existing install it keeps
-   adapted files and flags them for human migration instead of
-   overwriting them.
+   (`.history/_init_receipt.md`); see `ADOPT.md` §3 step 5 for the init
+   contract.
 4. Run `.history/_bin/<platform>/status.sh` (Windows: `status.ps1`) for the
    status table. Run `.history/_bin/<platform>/selftest.sh` (Windows:
    `selftest.ps1`) — expect `SELFTEST-PASS`; a new install whose gates
    cannot demonstrate failing is not verified. Run the tick script in diff
    mode twice without changing
    artifacts: the second run should print nothing. Then boot a worker with
-   no slug — expect the pick list. The plane wake is event-driven:
-   start `plane-watch.sh` in the background and configure the harness
-   scheduler to run the `plane-poll` backstop every 30 min (worker `tick`
-   still runs at `HOT_RATE` (3 min) and ladders down automatically — see
-   `_bin/README.md`); sessions re-register their wakes on `POLL-RATE`
-   transitions. `plane-poll` runs stale and relay scans on their own intervals; without a scheduler, checks require
+   no slug — expect the pick list. See `ADOPT.md` §9 for the full
+   verification checklist. The plane wake is the periodic runner:
+   register it (cron / Task Scheduler, every 3 min — `runner.sh install`);
+   the runner runs the diff probe, the overdue check, and stale/relay
+   scans when due, and regenerates the board when the diff is non-empty
+   (worker `tick` still runs at `HOT_RATE` (3 min) and ladders down
+   automatically — see `_bin/README.md`); sessions re-register their wakes
+   on `POLL-RATE` transitions. Without a scheduler, checks require
    manual session resumes. Run the plane session itself inside tmux
    (`tmux new -s plane`, run the agent, `Ctrl-b d` to detach,
-   `tmux attach -t plane` to reattach) — the event-driven wake needs a
+   `tmux attach -t plane` to reattach) — the runner's wake needs a
    tmux pane to type into. Keep the session behaving like a normal
    terminal: in `~/.tmux.conf`, set `set -g mouse on` (the wheel then
    scrolls scrollback instead of reaching the agent as input) and
@@ -172,49 +176,3 @@ line-count check enforces the cap.
    -File .\run-server-matrix.ps1`; it exercises the PowerShell server
    lifecycle without WSL, Python, curl, tmux, or Bash. Results print to
    stdout; the Windows-only skips are reported inline.
-5. **Existing v4 installs adopting v5**: read `docs/workflow/anchors.md`
-   first, then port doc
-   deltas per step 1 and sync `_bin/`. The v4 dormant `anchors` gate
-   activates by installing this package's `closecheck` (or uncommenting
-   the gate block in the v4 script). Both role bodies and the brief
-   template must move together — a v5 charter line with a v4 worker body
-   (or vice versa) leaves either binding gaps or dangling references.
-6. **Existing v5/v5.1 installs with a hardened `api.sh`**: if the installed
-   copy still carries project credentials/endpoints inline, port them into
-   an `.history/_bin/api-config.env` shaped like
-   `.history/_templates/api-config.template.env`, then replace the script
-   with this package's engine — the allowlisted path stays identical while
-   project specifics move to the config.
-
-## File map
-
-```
-docs/workflow/anchors.md                       binding anchor table B1–B6 + B2 confidence labels (read first, every boot)
-AGENTS.md                                      Codex project entrypoint for the v6 roles
-docs/workflow/control-plane-pm.md              core spec
-docs/workflow/parallel-agents.md               parallel-layer spec (laddered poll constants)
-docs/workflow/control-plane-instructions.md    plane duties (lock, poll, ratify, blocked routing) — verify/review detail branches to verify-duties.md
-docs/workflow/verify-duties.md                 plane branch: CLOSE ratification walk, claims counter, pre-test review gate, manual-test rules, api-config instantiation
-docs/workflow/worker-instructions.md           worker duties (claim, execute, state lines) — close detail branches to worker-close.md
-docs/workflow/worker-close.md                  worker branch: CLOSE entry shape (B1–B5), manual-test logging, TASK-COMPLETE/CLEANUP consumption
-docs/workflow/async-inputs.md                  polling, inbox, relay, and stale-check protocol
-docs/workflow/permissions-manifest.md          capability checklist (grant via harness-native means)
-docs/workflow/reporting-instructions.md        worker reports and plane summaries (+ metrics-dictionary rule)
-docs/workflow/metrics.md                       metrics dictionary (recompute command, scope, date, limits per figure)
-.history/_templates/TASK_LIST.template.md      task index seed
-.history/_templates/workers.template.md        execution-token ledger seed (empty table)
-.history/_templates/brief.template.md          charter brief seed (carries binding: anchors B1–B6)
-.history/_templates/worklog.template.md        worklog seed
-.history/_templates/qa.template.md             Q&A protocol seed
-.history/_templates/review.template.md         review-gate report seed
-.history/_templates/inbox.template.md          async inter-agent message seed
-.history/_templates/api-config.template.env    project API scaffold seed (plane copies+fills to _bin/api-config.env at init)
-.history/_bin/README.md                        fixed probes and scripts by platform
-.agent/commands/control-plane.md              /control-plane trigger (Claude Code only)
-.agent/commands/worker.md                     /worker trigger (Claude Code only)
-.agent/commands/shutdown.md                   /shutdown trigger — coordinated graceful shutdown (plane-only, Claude Code only)
-.agent/commands/grill.md                      /grill trigger — Scoper, §0 pre-intake (user-invoked only, Claude Code only)
-.agent/commands/helper.md                     /helper trigger — helper role (user-invoked only, Claude Code only)
-.agent/skills/requirements-grill/SKILL.md     requirements-grill skill — the grilling interview (adapted from Matt Pocock's grill-me/grilling, MIT)
-.history/_templates/intake.template.md        intake doc seed (Scoper output, read by the plane at §1)
-```

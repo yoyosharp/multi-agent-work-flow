@@ -5,38 +5,32 @@
 param([string]$Slug = '')
 $ErrorActionPreference = 'SilentlyContinue'
 Set-Location (Join-Path $PSScriptRoot '..\..\..')
+# Shared claim-row parser (v6.5, L-C4) — dot-sourced before any parsing.
+. (Join-Path $PSScriptRoot 'claim-rows.ps1')
 $StaleAfter = if ($env:STALE_AFTER) { [int]$env:STALE_AFTER } else { 1800 }
 $terminalStates = 'GRANTED','EXECUTING','DECLARED','STALE','CHALLENGED'
 
 function Scan-Task($td) {
   $wm = Join-Path $td.FullName 'workers.md'
   if (-not (Test-Path $wm)) { return }
-  # header-indexed parse (v5.1 added Method/Commitment; positional [9] misreads)
-  $sm = 9
-  foreach ($line in Get-Content $wm) {
-    if ($line -match '^\|\s*#\s*\|') {
-      $cols = $line -split '\|' | ForEach-Object { $_.Trim() }
-      for ($i = 1; $i -lt $cols.Count; $i++) {
-        if ((($cols[$i] -replace '#.*$','').Trim()) -eq 'Status') { $sm = $i; break }
-      }
-      break
-    }
-  }
+  # rows with non-terminal status — the shared parser (both ledger shapes)
   $rows = @()
-  foreach ($line in Get-Content $wm) {
-    if ($line -match '^\|\s*\d+\s*\|') {
-      $cols = $line -split '\|' | ForEach-Object { $_.Trim() }
-      if ($cols.Count -gt $sm -and $cols[$sm]) {
-        $first = ($cols[$sm] -split ' ')[0]
-        if ($terminalStates -contains $first) { $rows += ,@($cols[2], $first) }
-      }
-    }
+  foreach ($row in (Get-ClaimRows $wm)) {
+    $first = ($row.Status -split ' ')[0]
+    if ($terminalStates -contains $first) { $rows += ,@($row.Num, $first) }
   }
   if ($rows.Count -eq 0) { return }
   "== $($td.Name)"
-  # map slug -> worktree dir (heuristic: strip date+CR prefix, underscores to hyphens)
-  $slugClean = ($td.Name -replace '^[0-9-]*','' -replace '^[a-z0-9]*-[0-9.]*','' -replace '_','-').TrimStart('-')
-  $w = Get-ChildItem .worktree -Directory | Where-Object { $_.Name -match [regex]::Escape($slugClean) } | Select-Object -First 1
+  # map slug -> worktree dir (Q-L5): exact .worktree/<slug> first, then
+  # .worktree/*-<short> (short = slug minus YYYY-MM-DD- prefix) — the
+  # same rule server.sh resolve_taskdir uses for task dirs.
+  $w = $null
+  $exact = Join-Path '.worktree' $td.Name
+  if (Test-Path $exact -PathType Container) { $w = Get-Item $exact }
+  if (-not $w) {
+    $short = $td.Name -replace '^\d{4}-\d{2}-\d{2}-',''
+    $w = Get-ChildItem .worktree -Directory | Where-Object { $_.Name -like "*-$short" } | Select-Object -First 1
+  }
   foreach ($r in $rows) {
     $n = $r[0]; $s = $r[1]
     $lastCommit = 'none'
@@ -58,7 +52,8 @@ function Scan-Task($td) {
 
 if ($Slug) {
   $td = Get-Item ".history\$($Slug.TrimEnd('/\'))" -ErrorAction SilentlyContinue
-  if ($td) { Scan-Task $td }
+  if (-not $td) { Write-Error "stale: no such task: $Slug"; exit 1 }
+  Scan-Task $td
 } else {
   foreach ($td in Get-ChildItem .history -Directory) { Scan-Task $td }
 }

@@ -13,10 +13,10 @@ the matching role instructions:
 - Worker: read `parallel-agents.md`, `async-inputs.md`, the task brief, and
   `worker-instructions.md`.
 
-On Windows, use `.history/_bin/windows/*.ps1`. The Windows package uses
-polling; it has no file watcher or tmux wake. Resume the Codex session when
-the user or workflow requires another poll. Use the package's exact scripts
-for status, task setup, server lifecycle, and gates.
+On Windows, use `.history/_bin/windows/*.ps1`. The Windows package runs the
+periodic runner on a schedule; it has no file watcher or tmux wake. Resume
+the Codex session when the user or workflow requires another poll. Use the
+package's exact scripts for status, task setup, server lifecycle, and gates.
 
 The `.agent/` commands and PreToolUse hook are Claude-specific (installed as
 `.claude/` on Claude Code). They do not provide Codex enforcement. Follow the task boundary and permission rules

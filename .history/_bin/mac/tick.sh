@@ -7,8 +7,26 @@
 #   --diff: print changed sections only; unchanged = no output.
 #   --plane: refresh an existing plane.lock as part of the plane's poll.
 #   Snapshots live under .history/._tick_snapshots/.
+# Shared claim-row parser (v6.5, L-C4) — sourced before the cd to root.
+. "$(dirname "$0")/claim-rows.sh" 2>/dev/null || { echo "claim-rows.sh missing under $(dirname "$0") — reinstall the package" >&2; exit 1; }
 set -u
 cd "$(dirname "$0")/../../.." || exit 1
+# Portable stat/sha (v6.5, Q-P1): GNU first, BSD fallback — same shape as
+# board.sh's sha_file(). The flavor is probed once; a per-call `||` would
+# double-print on a partial failure (multi-file stat).
+if stat -c %Y /dev/null >/dev/null 2>&1; then STAT_GNU=1; else STAT_GNU=0; fi
+mtime() {  # $1 = file → epoch mtime
+  if [ "$STAT_GNU" -eq 1 ]; then stat -c %Y "$1" 2>/dev/null
+  else stat -f %m "$1" 2>/dev/null; fi
+}
+stat_line() {  # "$@" = files → "<mtime> <file>" per file
+  if [ "$STAT_GNU" -eq 1 ]; then stat -c '%y %n' "$@" 2>/dev/null || true
+  else stat -f '%Sm %N' -t '%Y-%m-%d %H:%M:%S' "$@" 2>/dev/null || true; fi
+}
+sha_line() {  # $1 = file → "<sha256>  <file>"
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"
+  else h=$(shasum -a 256 "$1" | cut -d' ' -f1); printf '%s  %s\n' "$h" "$1"; fi
+}
 LOCK_STALE="${LOCK_STALE:-3600}"
 # Poll-rate ladder: adaptive cadence vs the fixed */3 (idle sessions re-read a
 # growing context every fire — measured 2026-11-03: two idle sessions burned
@@ -49,12 +67,37 @@ if [ ${#tasks[@]} -eq 0 ]; then
     [ -f "${d}workers.md" ] && tasks+=("${d#.history/}")
   done
 fi
+# --diff hard-fails on an unresolvable slug (v6.5 §8.2): a silent empty
+# diff on a wrong slug once left a worker blind for ~2h. Display mode
+# keeps its visible "no such task" line (gather, below).
+if [ "$diff_mode" -eq 1 ]; then
+  for slug in "${tasks[@]}"; do
+    [ -d ".history/${slug%/}/" ] || { echo "tick: no such task: ${slug%/} — check the slug (declare-time resolution lives in declare-role.sh)" >&2; exit 1; }
+  done
+fi
+
+pid_alive_matches() { # $1 = "host:pid" — mirror of lock.sh (verify the pid's cwd points in this repo; Linux /proc, mac lsof -p)
+  local pid=${1##*:}
+  [ -n "$pid" ] || return 1
+  if [ -d "/proc/$pid" ]; then
+    local cwd; cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null)
+    [ -n "$cwd" ] && [ "$(dirname "$cwd")" = "$(dirname "$PWD")" -o "$cwd" = "$PWD" ]
+  else
+    ps -p "$pid" >/dev/null 2>&1 || return 1
+    local cwd; cwd=$(lsof -p "$pid" 2>/dev/null | awk '$4 == "cwd" {print $NF; exit}')
+    [ -z "$cwd" ] && return 0  # pid alive, lsof gave no cwd — binding unverifiable
+    [ "$(dirname "$cwd")" = "$(dirname "$PWD")" -o "$cwd" = "$PWD" ]
+  fi
+}
 
 lock_state() {
   [ -f .history/plane.lock ] || { echo missing; return; }
   grep -q '^released' .history/plane.lock && { echo released; return; }
-  age=$(( $(date +%s) - $(stat -c %Y .history/plane.lock) ))
-  if [ "$age" -gt "$LOCK_STALE" ]; then echo stale; else echo fresh; fi
+  local holder age
+  holder=$(grep '^host:pid ' .history/plane.lock | grep -oE '[A-Za-z0-9_-]+:[0-9]+' | head -1)
+  age=$(( $(date +%s) - $(mtime .history/plane.lock) ))
+  if pid_alive_matches "$holder"; then echo fresh; return; fi
+  if [ "$age" -gt "$LOCK_STALE" ]; then echo stale; else echo fresh-unverified; fi
 }
 
 snapdir=.history/._tick_snapshots
@@ -65,36 +108,28 @@ snapdir=.history/._tick_snapshots
 [ "$plane_mode" -eq 1 ] && snapdir=.history/._tick_snapshots/plane
 [ "$diff_mode" -eq 1 ] && mkdir -p "$snapdir"
 
-# claim-row parse, header-indexed: find Status/Phase/Worker columns in the
-# table header so a ledger-format change (v5.1 added Method/Commitment)
-# cannot silently shift what the parsers read. Falls back to the pre-v5.1
-# positional layout when the header carries no Status column.
-claim_rows() {  # $1 = workers.md
-  awk -F'|' '
-    function trim(x) { gsub(/^ +| +$/,"",x); return x }
-    /^\|[ ]*#[ ]*\|/ && (hdr != 1) {
-      for (i=2; i<=NF; i++) { h=trim($i); sub(/#.*/,"",h); if (h=="Status") si=i; if (h=="Phase") pi=i; if (h=="Worker") wi=i }
-      hdr=1; next
-    }
-    /^\|[ ]*[0-9]+[ ]*\|/ {
-      if (!si) { si=10; pi=6; wi=3 }  # legacy positional fallback
-      n=trim($2); w=trim($wi); p=trim($pi); s=trim($si)
-      print "  row "n" ["w"] "p" — "s
-    }' "$1" 2>/dev/null | head -8
+# claim-row display: the shared parser (claim-rows.sh) in tick's row format.
+claim_rows_display() {  # $1 = workers.md
+  claim_rows "$1" 2>/dev/null | awk -F'\t' '{print "  row " $1 " [" $2 "] " $3 " — " $4}' | head -8
+}
+
+wt_state() {  # $1 = worktree dir → log line + status lines (shared by both worktree loops, L-C9)
+  git -C "$1" log --oneline -1 2>/dev/null
+  git -C "$1" status --short 2>/dev/null | head -5
 }
 
 gather() {  # emits the sections for one tick; consumed for display & snapshot
   echo '== TASK_LIST'
-  stat -c '%y %n' .history/TASK_LIST.md 2>/dev/null || true
+  stat_line .history/TASK_LIST.md
   echo "plane-lock: $(lock_state)"
   for slug in "${tasks[@]}"; do
     d=".history/${slug%/}/"
     [ -d "$d" ] || { echo "no such task: $slug"; continue; }
     echo "== $slug"
-    stat -c '%y %n' "${d}worklog.md" "${d}workers.md" "${d}inbox.md" \
-      "${d}qa.md" "${d}review.md" 2>/dev/null
+    stat_line "${d}worklog.md" "${d}workers.md" "${d}inbox.md" \
+      "${d}qa.md" "${d}review.md" "${d}plan.md"
     # claim-row snapshot: # / worker / phase / status (terminal-state grep hint)
-    claim_rows "${d}workers.md"
+    claim_rows_display "${d}workers.md"
     # last non-plain worklog heartbeat line, if any
     tail -1 "${d}worklog.md" 2>/dev/null | cut -c1-100
   done
@@ -106,8 +141,7 @@ gather() {  # emits the sections for one tick; consumed for display & snapshot
       [ "$matched" -eq 1 ] || continue
     fi
     echo "== worktree ${w#.worktree/}"
-    git -C "$w" log --oneline -1 2>/dev/null
-    git -C "$w" status --short 2>/dev/null | head -5
+    wt_state "$w"
   done
 }
 
@@ -131,17 +165,7 @@ markers() {  # >0 when some marker makes fast reaction worthwhile
     # only task dirs (workers.md is the marker); awk on a missing file
     # fatal-exits with empty output and poisons the arithmetic
     [ -f "${d}workers.md" ] || continue
-    x=$(awk -F'|' '
-      function trim(x) { gsub(/^ +| +$/,"",x); return x }
-      /^\|[ ]*#[ ]*\|/ && (hdr != 1) {
-        for (i=2; i<=NF; i++) { h=trim($i); sub(/#.*/,"",h); if (h=="Status") si=i }
-        hdr=1; next
-      }
-      /^\|[ ]*[0-9]+[ ]*\|/ {
-        if (!si) si=10  # legacy positional fallback
-        s=trim($si); split(s,w," ")
-        if (w[1] ~ /^(GRANTED|EXECUTING|DECLARED|STALE|CHALLENGED)$/) c++
-      } END{print c+0}' "${d}workers.md" 2>/dev/null)
+    x=$(claim_rows "${d}workers.md" 2>/dev/null | awk -F'\t' '{split($4,w," "); if (w[1] ~ /^(GRANTED|EXECUTING|DECLARED|STALE|CHALLENGED)$/) c++} END{print c+0}')
     n=$((n + ${x:-0}))
     if [ -f "${d}qa.md" ]; then
       x=$(awk '/^\|[ ]*Q[0-9]/ && /ANSWERED/ {c++} END{print c+0}' "${d}qa.md" 2>/dev/null)
@@ -149,6 +173,10 @@ markers() {  # >0 when some marker makes fast reaction worthwhile
     fi
     if [ -f "${d}review.md" ]; then
       x=$(awk -F'|' '/^\|[ ]*F[0-9]/ {n=split($0,a,"|"); s=a[n-1]; gsub(/^ +| +$/,"",s); if (s !~ /RESOLVED|DROPPED/) c++} END{print c+0}' "${d}review.md" 2>/dev/null)
+      n=$((n + ${x:-0}))
+    fi
+    if [ -f "${d}plan.md" ]; then
+      x=$(awk -F'|' '/^\|[ ]*D[0-9]/ {n=split($0,a,"|"); s=a[n-1]; gsub(/^ +| +$/,"",s); if (s=="OPEN") c++} END{print c+0}' "${d}plan.md" 2>/dev/null)
       n=$((n + ${x:-0}))
     fi
   done
@@ -163,7 +191,7 @@ rate_for() {  # $1 = streak
 
 prev_rate=-1
 [ -f "$streak_file".rate ] && prev_rate=$(cat "$streak_file.rate" 2>/dev/null || echo -1)
-index_out=$(sha256sum .history/TASK_LIST.md 2>/dev/null | cut -d' ' -f1 || echo 'TASK_LIST missing')
+index_out=$(sha_line .history/TASK_LIST.md 2>/dev/null | cut -d' ' -f1 || echo 'TASK_LIST missing')
 if [ ! -f "$snapdir/.index" ] || [ "$(cat "$snapdir/.index" 2>/dev/null)" != "$index_out" ]; then
   echo '== TASK_LIST CHANGED'
   echo "$index_out"
@@ -174,10 +202,10 @@ for slug in "${tasks[@]}"; do
   s="${slug%/}"
   d=".history/$s/"
   [ -d "$d" ] || continue
-  out=$(for f in worklog.md workers.md inbox.md qa.md review.md; do
-      [ -f "${d}${f}" ] && sha256sum "${d}${f}"
+  out=$(for f in worklog.md workers.md inbox.md qa.md review.md plan.md; do
+      [ -f "${d}${f}" ] && sha_line "${d}${f}"
     done
-    claim_rows "${d}workers.md"
+    claim_rows_display "${d}workers.md"
     tail -1 "${d}worklog.md" 2>/dev/null | cut -c1-100)
   out=$(printf '%s\n%s' "$(lock_state)" "$out")
   snap="$snapdir/$s"
@@ -198,7 +226,7 @@ for w in .worktree/*/; do
     [ "$matched" -eq 1 ] || continue
   fi
   n="$(basename "$w")"
-  wt=$(git -C "$w" log --oneline -1 2>/dev/null; git -C "$w" status --short 2>/dev/null | head -5)
+  wt=$(wt_state "$w")
   snap="$snapdir/.wt-$n"
   if [ ! -f "$snap" ] || [ "$(cat "$snap" 2>/dev/null)" != "$wt" ]; then
     echo "-- $n CHANGED"

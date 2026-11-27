@@ -19,6 +19,9 @@
 # task dir (the watcher sees the log append; the touch is belt-and-braces).
 # Role/slug: WORKFLOW_ROLE/WORKFLOW_SLUG (WF_* fallback aliases), else
 # derived from cwd (under .worktree/<slug> → worker).
+# The env-var/cwd derivation is deliberate (Q-H2): the Stop hook runs
+# where the agent pid walk is unreliable, so the registry lookup the
+# PreToolUse hook uses does not apply here.
 set -u
 
 INPUT=$(cat)
@@ -56,15 +59,27 @@ done
 [ -n "$TASKDIR" ] || exit 0
 [ -f "$TASKDIR/workers.md" ] || exit 0
 
-# latest row's Status (header-indexed, like the selftest parser)
-latest="$(awk -F'|' '
-  function trim(x) { gsub(/^ +| +$/,"",x); return x }
-  /^\|[ ]*#[ ]*\|/ && !hdr {
-    for (i=2; i<=NF; i++) { h=trim($i); sub(/#.*/,"",h); if (h=="Status") si=i }
-    hdr=1; next
-  }
-  /^\|[ ]*[0-9]+[ ]*\|/ { last=trim($si) }
-  END { print last }' "$TASKDIR/workers.md")"
+# latest row's Status — the shared parser (claim-rows.sh) when present;
+# the inline awk is the fallback (it requires the # header, so it is
+# blind to old-shape ledgers — the parser is the fix for that).
+latest_status() {  # $1 = workers.md → latest row's Status
+  local cr=""
+  for b in "$ROOT/.history/_bin/linux/claim-rows.sh" "$ROOT/.history/_bin/mac/claim-rows.sh"; do
+    [ -f "$b" ] && { cr="$b"; break; }
+  done
+  if [ -n "$cr" ]; then
+    . "$cr" 2>/dev/null && { claim_rows "$1" | tail -1 | awk -F'\t' '{print $4}'; return; }
+  fi
+  awk -F'|' '
+    function trim(x) { gsub(/^ +| +$/,"",x); return x }
+    /^\|[ ]*#[ ]*\|/ && !hdr {
+      for (i=2; i<=NF; i++) { h=trim($i); sub(/#.*/,"",h); if (h=="Status") si=i }
+      hdr=1; next
+    }
+    /^\|[ ]*[0-9]+[ ]*\|/ { last=trim($si) }
+    END { print last }' "$1"
+}
+latest="$(latest_status "$TASKDIR/workers.md")"
 
 signal=0
 [ "$latest" = "RELEASED" ] && signal=1

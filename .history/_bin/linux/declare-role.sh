@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # declare-role.sh — declare this session's workflow role to the hook registry.
 #
-# Usage: declare-role.sh <role> [slug]
+# Usage: declare-role.sh <role> [slug] [label]
 #   role: plane|worker|scoper|helper; slug required for worker only.
+#   label: worker display label (defaults to the task short); recorded
+#     in the registry so the plane can write it into the claim row at
+#     GRANT. A short slug resolves to its unique full slug at DECLARE
+#     (exact .history/<slug> first, then .history/*-<slug>); zero
+#     matches or ambiguous → refused.
 #
-# Writes .history/_sessions/<agent-pid> (two lines: `role=<role>` and, for
-# worker, `slug=<slug>`). The hook (domain-guard.sh) reads that file first
+# Writes .history/_sessions/<agent-pid> (`role=<role>` and, for worker,
+# `slug=<slug>` and, when given, `label=<label>`). The hook (domain-guard.sh) reads that file first
 # — registry beats the WORKFLOW_ROLE env var and the cwd derivation — so
 # no launch-time env var or cd is needed: run the command (/worker,
 # /control-plane, /grill, /helper) from anywhere and it declares the role
@@ -27,12 +32,29 @@
 set -u
 
 ROOT="${WORKFLOW_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd -P)}"
-ROLE="${1:-}"; SLUG="${2:-}"
+ROLE="${1:-}"; SLUG="${2:-}"; LABEL="${3:-}"
 case "$ROLE" in plane|worker|scoper|helper) ;; *)
   echo "declare-role: role must be plane|worker|scoper|helper (got: ${ROLE:-<none>})" >&2; exit 1 ;;
 esac
 if [ "$ROLE" = "worker" ] && [ -z "$SLUG" ]; then
   echo "declare-role: worker needs a slug: declare-role.sh worker <slug>" >&2; exit 1
+fi
+if [ "$ROLE" = "worker" ]; then
+  # Slug resolution at DECLARE (v6.5 §8.2): an exact .history/<slug> wins;
+  # else a unique .history/*-<slug> (short slug minus the YYYY-MM-DD-
+  # prefix) resolves; zero matches or ambiguous → refuse.
+  if [ ! -d "$ROOT/.history/$SLUG" ]; then
+    matches=$(for d in "$ROOT"/.history/*-"$SLUG"; do [ -d "$d" ] && printf '%s\n' "${d##*/}"; done)
+    count=$(printf '%s' "$matches" | grep -c . || true)
+    if [ "$count" -eq 1 ]; then
+      echo "declare-role: slug '$SLUG' resolved to '$matches'"
+      SLUG="$matches"
+    elif [ "$count" -eq 0 ]; then
+      echo "declare-role: no such task: $SLUG — check the slug (no .history/<slug> and no .history/*-<slug>)" >&2; exit 1
+    else
+      echo "declare-role: ambiguous slug '$SLUG' — matches: $(printf '%s' "$matches" | tr '\n' ',' | sed 's/,$//; s/,/, /g') — use the full slug" >&2; exit 1
+    fi
+  fi
 fi
 
 pid_cmdline() { # pid_cmdline <pid> -> live cmdline (single line) or empty
@@ -86,6 +108,7 @@ tmp="$ROOT/.history/_sessions/.tmp.$$"
 {
   printf 'role=%s\n' "$ROLE"
   if [ "$ROLE" = "worker" ]; then printf 'slug=%s\n' "$SLUG"; fi
+  if [ "$ROLE" = "worker" ] && [ -n "$LABEL" ]; then printf 'label=%s\n' "$LABEL"; fi
 } > "$tmp" && mv "$tmp" "$ROOT/.history/_sessions/$AGENT_PID" \
   || { echo "declare-role: failed to write the registry entry" >&2; rm -f "$tmp"; exit 1; }
-echo "declare-role: role=$ROLE${SLUG:+ slug=$SLUG} (agent pid $AGENT_PID)"
+echo "declare-role: role=$ROLE${SLUG:+ slug=$SLUG}${LABEL:+ label=$LABEL} (agent pid $AGENT_PID)"

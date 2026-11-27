@@ -9,7 +9,7 @@ $d = ".history\$Slug"
 if (-not (Test-Path $d)) { "no task dir $d"; exit 1 }
 $t = '.history\_templates'
 
-foreach ($f in 'workers','qa','review','worklog','inbox') {
+foreach ($f in 'workers','qa','review','worklog','inbox','plan') {
   $dst = Join-Path $d "$f.md"
   if (-not (Test-Path $dst)) {
     $src = Join-Path $t "$f.template.md"

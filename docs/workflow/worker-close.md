@@ -25,7 +25,8 @@ after writing the CLOSE entry, run `chain.sh append <slug>` — it appends a
 successor handoff before chaining, not after. `closecheck.sh anchors`
 verifies the chain, and a break or a missing chain line on a chained
 worklog is an ANCHOR-FAIL. Worklogs with no chain lines at all are
-grandfathered (pre-v6). Flip your row to RELEASED — the plane runs
+grandfathered (pre-v6) until the first v6 CLOSE on that worklog starts a
+chain. Flip your row to RELEASED — the plane runs
 `closecheck.sh anchors <slug>` before ratifying; an ANCHOR-FAIL closes
 nothing.
 

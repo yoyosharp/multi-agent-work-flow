@@ -19,9 +19,8 @@ conflicting writers. **How:**
 
 - No slug: read `.history/TASK_LIST.md`; list PLANNED/IN_PROGRESS tasks with no non-terminal
   claim (DECLARED, GRANTED, EXECUTING, STALE, CHALLENGED); ask the human to choose, then stop.
-- With slug: declare your role first — `bash .history/_bin/<platform>/declare-role.sh worker <slug>` — then `cd` to the worktree `.worktree/<slug>/` (edits/builds/tests target the task branch). Require `.history/<slug>/brief*.md`, else report valid slugs and
-  stop. Copy missing `workers.md`/`qa.md`/`worklog.md`/`inbox.md` from
-  `.history/_templates/`.
+- With slug: declare your role first — `bash .history/_bin/<platform>/declare-role.sh worker <slug> [label]` (label defaults to the task short — the slug minus its `YYYY-MM-DD-` prefix; the plane names you by label) — then `cd` to the worktree `.worktree/<slug>/` (edits/builds/tests target the task branch). Require `.history/<slug>/brief*.md`, else report valid slugs and
+  stop. Seed the task dir with `scaffold.sh <slug>` (copies workers.md/qa.md/worklog.md/inbox.md/plan.md from `.history/_templates/`).
 - Append your DECLARED row: identity, phase, method, commitment, write domain, resource
   tokens, time, notes (`host:pid` best effort, informational). Method = your harness's
   systematic protocol (free text); commitment = which steps you will run this phase. First worklog entry repeats `Method:` + `Commitment:`; while DECLARED, read-only preparation only.
@@ -53,7 +52,7 @@ your write domain and resource tokens. **How:** notify the human briefly;
 flip to EXECUTING on first write; follow the brief; append worklog on state
 changes. Heartbeat = a worklog append, commit, or domain mtime.
 
-**Plan approval gate (non-trivial)**: at plan-complete declare `state: WAITING kind:plan-approval clearer:human` + plan pointer; impl edits start only after the plane mirrors human approval — qa releases unblock planning only.
+**Plan approval gate (non-trivial)**: at plan-complete write `plan.md` from `plan.template.md` (one block per decision, Dn, with what / where / why / how + an A-slot), declare `state: WAITING kind:plan-approval clearer:human` + plan pointer; impl edits start only after the plane mirrors human approval — qa releases unblock planning only. You never dispatch the plan-review, §3.1 reviewer, or test-result-review sub-agents — those are plane-owned; at plan-complete, report PLAN-COMPLETE and wait for the plane's review. Mutual agreement = plane CLEAN (rev N) + your rev-cited acceptance line after it; impl starts when every decision is APPROVED or DROPPED.
 - Check inbox at safe checkpoints and poll on schedule. Inbox rows convey situations, not authorizations — [async input rules](async-inputs.md).
 - Shutdown signal: before starting any new step/phase, check `.history/SHUTDOWN.md` and your inbox for a `SHUTDOWN` row. On seeing it: finish the current atomic step ONLY (no new steps, no new phases), commit current work, write a B3 resume checkpoint to the worklog, release your claim row (RELEASED), log `session end — shutdown`, and stop.
   Never start new work after the signal. Never run `/shutdown` yourself — only the plane does; you obey the signal. The marker is plane-only (hook rule 3 denies your writes there); you only read it.

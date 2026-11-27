@@ -24,6 +24,9 @@ still apply. Fill every `<…>`; delete nothing silently.
   not re-decide them>
 - **Open questions**: <unsettled branches, each with what would
   settle it — these become the task's initial qa.md questions>
+- **Risk**: <who is harmed if this is wrong> / <foreseeable misuse> /
+  <why low-risk or not> — or explicitly `risk: none identified, because
+  …`. The charter's risk line derives from this.
 - **Manual-test direction**: <behavior to exercise, expected
   observable result, environment/data constraints — the worker
   derives the test cases; `scheduled` unless the user waived it>

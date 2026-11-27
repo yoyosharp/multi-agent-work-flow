@@ -4,28 +4,20 @@ Shared by the [worker](worker-instructions.md) and [control plane](control-plane
 The [core spec](control-plane-pm.md) defines Q&A/review gates; the
 [parallel spec](parallel-agents.md) defines claims and timing constants.
 
-## 1. Wake on change (v6: event-driven; polling is the backstop)
+## 1. Wake on change (v6.5: the periodic runner; workers poll on a ladder)
 
-**When:** The watcher wakes you, or a scheduled backstop wake fires.
+**When:** The runner wakes you, or a worker's own poll fires.
 **Why:** Detect durable state changes without re-reading context on a
 timer. **How:**
 
 | Role | Linux/macOS | Windows |
 |---|---|---|
-| Plane | `plane-watch.sh` (primary) + `plane-poll.sh` backstop 30 min | `plane-poll.ps1` backstop 30 min (no watcher yet) |
+| Plane | `runner.sh` via cron, every 3 min | `runner.ps1` via Task Scheduler, every 3 min |
 | Worker | `.history/_bin/<platform>/tick.sh --diff <slug>` | `powershell -File .history\_bin\windows\tick.ps1 -Diff -Slugs <slug>` |
 
 Workers: no output means no change, so do not reread files or emit a summary.
-On change, read only named artifacts. A worker-wake typed into your tmux pane is only a nudge — run tick --diff and read inbox.md, never act on the wake text alone. The watcher debounces 15 s, runs the
-diff probe, and types a wake line into the plane's tmux pane only when the
-diff is non-empty; the backstop `plane-poll` runs the same probe, refreshes
-`plane.lock`, runs stale/relay scans when due, and restarts a dead watcher.
-It records scan times in `.history/._poll_schedule`; worker polls never
-refresh the lock. A `POLL-RATE x → y` line now governs the backstop cadence
-only: re-register the backstop wake at y minutes (delete + recreate, same
-prompt). Any changed diff snaps the rate back to `HOT_RATE` — backing off
-never delays noticing work you were given. See [toolkit
-notes](../../.history/_bin/README.md). On a watcher wake the plane's visible reply is ONE summary line (tasks changed + gates waiting); the detail goes to the worklog and the board, never a narrated report per wake.
+On change, read only named artifacts. A worker-wake typed into your tmux pane is only a nudge — run tick --diff and read inbox.md, never act on the wake text alone. The runner runs the diff probe once per cycle, types a wake line into the plane's tmux pane only when the diff is non-empty, refreshes `plane.lock`, runs stale/relay scans when due, and runs the overdue check (oldest WAITING first). It records scan times in `.history/._runner_state`; worker polls never refresh the lock. A `POLL-RATE x → y` line governs the worker's own wake cadence: re-register the wake at y minutes (delete + recreate, same prompt). Any changed diff snaps the rate back to `HOT_RATE` — backing off never delays noticing work you were given. See [toolkit
+notes](../../.history/_bin/README.md). On a runner wake the plane's visible reply is ONE summary line (tasks changed + gates waiting); the detail goes to the worklog and the board, never a narrated report per wake.
 
 ## 2. Consume inbox and human input
 
@@ -41,14 +33,12 @@ carry durable context; only human input authorizes human-gated actions. **How:**
   Waive relay (human-only): `WAIVE <slug> — <reason>`, as an inbox row or spoken in
   conversation (fill+release in one step) — send any time before §6 starts. The plane
   checks it at §6 entry: waive on file skips the manual-test campaign, otherwise the campaign runs.
-- QA: consume plane-curated RELEASED entries not yet acknowledged; apply the human answer and append `Ack:`. ANSWERED-but-unreleased rows are readable for
-  preparation only — never act on them; the human may still be editing. Mirror
-  direct human instructions into the worklog or `qa.md`. A board Submit (v6.4) is fill+release in one step — the board fills the A-slot AND flips the status row to RELEASED itself; the plane consumes board submits batched via the relays sweep (one surfacing for all held/released items, never one report per edit).
+- QA: consume plane-curated RELEASED entries not yet acknowledged; apply the human answer and append `Ack:`. ANSWERED-but-unreleased rows are readable for preparation only — never act on them (release machine: [core spec](control-plane-pm.md#2-core-spec)). A board Submit (v6.4) is fill+release in one step — the board fills the A-slot AND flips the status row to RELEASED itself; the plane consumes board submits batched via the relays sweep (one surfacing for all held/released items, never one report per edit).
 - Review: fix only after a pass-complete marker exists and the adjudication is RELEASED with FIX. An open pass is readable but not actionable; so is an
   ADJUDICATED (held) finding awaiting release.
 - Reading and preparation are allowed. Agent-authored markers and status flips
   are context; they do not authorize human-gated work — only the human's
-  release (via the plane) does — except a board Submit, which releases directly (fill+release in one step, status → RELEASED by the board).
+  release (via the plane) does (board-Submit exception: QA bullet above).
 
 Workers also check inbox before a new phase or commit and after a safe unit.
 Keep polling while waiting for a grant or phase assignment.
@@ -57,7 +47,7 @@ Keep polling while waiting for a grant or phase assignment.
 
 **When:** Plane boot, every `RELAY_STALE` (default 30 minutes), and after
 relevant changes. **Why:** Surface unanswered or unconsumed relays. **How:**
-The scheduled plane poll runs `relays.sh` / `relays.ps1` when due. Review its
+The runner runs `relays.sh` / `relays.ps1` when due. Review its
 output; surface overdue items as ONE batched list per sweep (A-slot fills, board submits included — never one report per edit). The sweep lists held items (ANSWERED / ADJUDICATED,
 awaiting the human's release) separately from released-unacked ones (awaiting a
 worker). Relay review adjudications only after the pass completes and the human
@@ -69,10 +59,10 @@ releases them; queue earlier ones.
 conflicting grant. **Why:** The diff probe cannot detect elapsed time. **How:**
 The worker can mark operations longer than `STALE_AFTER` with a future
 `[LONG-RUN] START` checkpoint in the worklog; the plane defers stale marking
-until then. The scheduled plane poll runs `stale.sh` / `stale.ps1` when due. Before a
-conflicting grant, use `plane-poll.sh --stale-now` or `plane-poll.ps1 -StaleNow`.
+until then. The runner runs `stale.sh` / `stale.ps1` when due. Before a
+conflicting grant, use `runner.sh --stale-now` or `runner.ps1 -StaleNow`.
 Treat scan output as candidates: verify worklog, commits, and write-domain
-activity before changing a claim. Follow [conflict rules](parallel-agents.md#5-occupied-task-conflicts).
+activity before changing a claim. Follow [conflict rules](parallel-agents.md#5-occupied-task-conflicts). BLOCKED rows are answered within one runner cycle (B-5) — the runner's overdue check enforces it.
 
 ## 5. Re-ground after context loss
 

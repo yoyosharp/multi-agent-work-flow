@@ -9,7 +9,7 @@ Companion to `control-plane-pm.md`. Applies when ≥2 workers may run concurrent
 
 ## 2. Parallelism rule
 
-Two workers may run concurrently iff **write domains are disjoint** (different worktrees/branches, or disjoint paths in a shared checkout) and **resource tokens are disjoint** (§4). Canonical split (proven): test worker in the worktree (owns `src/test/`, `TEST_` commits on the agent branch) ∥ manual-test worker on the main checkout (read-only tree, no git ops, no service restarts, insert-only fixtures, plain HTTP). The board is the task-dir artifacts: worklog.md = per-worker heartbeat, TASK_LIST.md = cross-task index. No new shared board.
+Two workers may run concurrently iff **write domains are disjoint** (different worktrees/branches, or disjoint paths in a shared checkout) and **resource tokens are disjoint** (§4). Canonical split (proven): test worker in the worktree (owns `src/test/`, `TEST_` commits on the agent branch) ∥ manual-test worker on the main checkout (read-only tree, no git ops, no service restarts, insert-only fixtures, plain HTTP). The board is the task-dir artifacts: worklog.md = per-worker heartbeat, TASK_LIST.md = cross-task index.
 
 ## 3. Execution token
 
@@ -20,7 +20,7 @@ One token per **declared write domain** (normally one per task; §5 scope-split 
 - **Heartbeat**: no dedicated file — worklog append, new commit, or write-domain mtime change. **Artifact signals are the authority**; a live process matching the claim's host:pid is a bonus signal only — with an unverifiable pid, artifacts alone decide staleness (an all-artifacts-cold row is STALE regardless of live same-name processes, and a fresh-artifact row is alive regardless of a dead recorded pid).
 - **Long operation marker**: before a single operation expected to exceed `STALE_AFTER`, the worker appends `[LONG-RUN] START <operation>; checkpoint <UTC time>` to worklog; it appends `[LONG-RUN] DONE <operation>` at completion. A future checkpoint defers STALE marking until that time. If a challenger arrives meanwhile, the challenge window starts at the checkpoint, so an active operation is not revoked mid-run.
 - **RELEASE**: worker writes report + `DONE` marker, flips its own row RELEASED; resource tokens return to the pool.
-- **CLOSE**: plane verifies SHAs/report, appends the closing worklog entry, records the phase in TASK_LIST. Only the **final** phase CLOSE moves the task to IN_REVIEW (user review gates); intermediate CLOSEs leave it IN_PROGRESS — the status machine has no back-edge.
+- **CLOSE**: plane verifies SHAs/report, appends the closing worklog entry, records the phase in TASK_LIST. The first review CLOSE (verified impl CLOSE, when §3.1 starts) moves the task to IN_REVIEW; it stays IN_REVIEW through the final review.
 
 ## 4. Resource tokens
 
@@ -44,13 +44,13 @@ Executors are bound only through on-disk artifacts and process behavior (§3 led
 
 ## 7. Poll-driven recovery
 
-At boot/resume and on every poll cadence tick, the plane runs one fixed
-`plane-poll` script: the diff probe runs every time; stale and relay scans run
-when due. Their last run times are cached under `.history/._poll_schedule`. A
-no-change diff skips artifact rereads but cannot prove a claim is live. Before
-a conflicting grant, force a stale scan (`plane-poll.sh --stale-now` /
-`plane-poll.ps1 -StaleNow`); verify scan candidates against all artifact
-signals before marking STALE.
+At boot/resume and on every runner cycle (every 3 min), the plane runs one
+fixed `runner.sh` cycle: the diff probe runs every time; stale and relay
+scans run when due. Their last run times are cached under
+`.history/._runner_state`. A no-change diff skips artifact rereads but cannot
+prove a claim is live. Before a conflicting grant, force a stale scan
+(`runner.sh --stale-now` / `runner.ps1 -StaleNow`); verify scan candidates
+against all artifact signals before marking STALE.
 
 A fresh GRANTED claim is adopted as-is; a newly observed DECLARED claim is
 ratified on that poll. A stale claim enters §5's challenge ladder only when an
@@ -69,12 +69,3 @@ At most one live plane (two ratifiers can race grants). `.history/plane.lock` re
 `HOT_RATE`=3 min (poll while anything is moving) · `WATCH_RATE`=10 min (markers present, nothing changed) · `IDLE_CAP`=30 min (no markers, long empty streak) · `BACKOFF_AFTER`=10 (empty-diff streak that starts backing off) · `STALE_AFTER`=30 min (cold artifacts before marking STALE; a future LONG-RUN checkpoint defers it) · `CHALLENGE_WINDOW`=20 min (recovery window after a real contender appears; active long-run checkpoint extends it) · `LOCK_STALE`=2·IDLE_CAP=60 min (plane lock age before takeover review — a backed-off plane legitimately presents a lock up to IDLE_CAP old) · `RELAY_STALE`=30 min (relay scan interval/age threshold). Poll cadence is laddered by the fixed scripts (see `_bin/README.md`): a session re-registers its wake when its tick prints `POLL-RATE x → y`, and any changed diff snaps the rate straight back to `HOT_RATE`. Staleness thresholds are wall-clock and decoupled from poll cadence. Env overrides: `BACKOFF_AFTER`, `HOT_RATE`, `WATCH_RATE`, `IDLE_CAP`, `LOCK_STALE`.
 
 Slug charset: task-dir slugs and worktree names use `[a-z0-9-]` (hyphens) — underscores in dir names collide with the `.` separator convention and break slug parsing in logs/indexes.
-
-## Adoption record — the live project (re-adopted 2026-10-29 on the polled model; prior 2026-10-27)
-
-- Resource-token inventory: **manual-test token** (app boot + localhost API campaign, one holder at a time; unit tests/compile token-free); local dev DB `<dev-db>@localhost:3306` shared, no exclusive token (fixture domains govern); no build lock (per-worktree Maven builds).
-- Fixture-domain convention: declared in `<task-dir>/manual-testing.md`; plane checks disjointness before a second store-sharing grant.
-- Ratification surface: `<task-dir>/workers.md` (per-task ledger; plane curates non-own rows).
-- Fixed script paths: `.history/_bin/linux/` (this box): `plane-poll.sh` (plane), `tick.sh --diff <slug>` (worker), `stale.sh`, `relays.sh`, `status.sh`; mac/windows variants synced, windows unverified on this box (no pwsh).
-- Kill semantics: none granted — zombie-kill escalates to the human by design.
-- Cadence: poll-rate ladder — HOT 3 / WATCH 10 / IDLE_CAP 30 min selected by empty-diff streak (BACKOFF_AFTER=10), retuned 2026-11-04 from 3/8/15 (adopted 2026-11-03), replacing the flat 3-min poll adopted for the 2026-10-29 A/B window. Motivation: measured ~87.4M fresh tokens burned per idle night by two flat-3-min sessions (plane + worker ~43.7M each, accelerating per hour). Streak state: `.history/._tick_snapshots/<slug>.streak` (+ `.rate`, `<slug>.plane.streak` for the plane — role-split snapshot namespaces landed 2026-11-03 after a dry-run probe consumed a worker's change signal). LOCK_STALE 360→1800s with the ladder (2026-11-03), →3600s (=2·IDLE_CAP) with the 3/10/30 retune (2026-11-04).

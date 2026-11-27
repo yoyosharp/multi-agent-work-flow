@@ -6,8 +6,8 @@
 # and each step is a full model turn that re-reads the whole context — so
 # boot was slow and expensive for no reason. The mechanics are here; the
 # plane keeps only the judgement: ratifying claims, answering BLOCKED rows,
-# registering its own durable 30-min backstop wake (an agent action, not a
-# shell one) and reporting.
+# verifying the runner's scheduled job (an agent action, not a shell one)
+# and reporting.
 #
 # Usage: boot.sh [project-root]
 #   1. Declares this session's role as plane (declare-role.sh).
@@ -15,14 +15,15 @@
 #      SHUTDOWN.md / ._watcher_stop would stop workers that just booted.
 #   3. Takes plane.lock via lock.sh. A live or unverifiable lock REFUSES —
 #      boot.sh never takes a lock over; the plane escalates to the human.
-#   4. Starts plane-watch.sh (nohup, detached) unless one is already running
-#      or PLANE_WATCH_DISABLE=1 / the platform tool is missing.
-#   5. Prints ONE summary: lock, watcher state, and a sweep of the LIVE tasks
+#   4. Registers the runner's scheduled job (runner.sh install, idempotent)
+#      and registers the plane pane from $TMUX (the watcher used to do this
+#      at start; a cron-invoked runner has no $TMUX).
+#   5. Prints ONE summary: lock, runner state, and a sweep of the LIVE tasks
 #      only (status.sh, one call — it already loops every task). DONE /
 #      DELIVERED tasks are listed as counts, never expanded: they hold
 #      nothing to ratify.
 # Exit: 0 = booted · 2 = refused (lock held / role not plane / no .history).
-# Windows: boot is run by hand (plane-poll.ps1 backstop only, no watcher).
+# Windows: boot is run by hand (runner.ps1 on Task Scheduler, no watcher).
 set -u
 
 ROOT="${1:-$(cd "$(dirname "$0")/../../.." && pwd -P)}"
@@ -103,24 +104,22 @@ lout="$(bash "$BIN/lock.sh" take 2>&1)"; lrc=$?
 echo "lock: $lout"
 [ "$lrc" -eq 0 ] || { echo "BOOT-REFUSED: plane.lock not taken (see above) — escalate to the human, do not retry" >&2; exit 2; }
 
-# 4. watcher
-if [ "${PLANE_WATCH_DISABLE:-0}" = "1" ]; then
-  echo "watcher: disabled by PLANE_WATCH_DISABLE=1 — backstop only"
-elif ! command -v inotifywait >/dev/null 2>&1 && ! command -v fswatch >/dev/null 2>&1; then
-  echo "watcher: no inotifywait/fswatch on this host — backstop only"
+# 4. runner — register the scheduled job (idempotent) + register the plane
+# pane from $TMUX (the watcher used to do this at start; a cron-invoked
+# runner has no $TMUX). The runner is the workflow clock; it needs no
+# long-running process.
+if [ "${RUNNER_DISABLE:-0}" = "1" ]; then
+  echo "runner: disabled by RUNNER_DISABLE=1 — polling only"
 else
-  wpid="$(sed -n 's/^pid=//p' .history/._watcher_state 2>/dev/null | head -1)"
-  if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null; then
-    echo "watcher: already running (pid $wpid)"
-  else
-    nohup bash "$BIN/plane-watch.sh" >> .history/_watcher.log 2>&1 &
-    sleep 1
-    wpid="$(sed -n 's/^pid=//p' .history/._watcher_state 2>/dev/null | head -1)"
-    if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null; then
-      echo "watcher: started (pid $wpid)"
-    else
-      echo "watcher: FAILED to start — see .history/_watcher.log (backstop still covers you)"
-    fi
+  rout="$(bash "$BIN/runner.sh" install 2>&1)"; rrc=$?
+  echo "runner: $rout"
+  [ "$rrc" -ne 0 ] && echo "runner: scheduling failed — run runner.sh by hand on a timer (the workflow still works, checks need manual resumes)"
+fi
+if command -v tmux >/dev/null 2>&1 && [ -n "${TMUX:-}" ]; then
+  pane="$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_id}' 2>/dev/null || true)"
+  if [ -n "$pane" ] && [ "$(cat .history/._plane_pane 2>/dev/null)" != "$pane" ]; then
+    printf '%s\n' "$pane" > .history/._plane_pane
+    echo "plane pane registered: $pane"
   fi
 fi
 
@@ -135,4 +134,4 @@ blocked="$(grep -E 'BLOCKED|WAITING' "$stmp" || true)"
 if [ -n "$blocked" ]; then echo "NEEDS-YOU (blocked / waiting):"; printf '%s\n' "$blocked" | sed 's/^/  /'; fi
 term="$(sed -n '/^== claims/,/^== declared/p' "$stmp" | grep -cE 'RELEASED' || true)"
 echo "released/terminal claim rows: ${term:-0} (not expanded — nothing to ratify)"
-echo "== boot done: ratify DECLARED claims, answer BLOCKED rows, register the 30-min backstop wake, then report"
+echo "== boot done: ratify DECLARED claims, answer BLOCKED rows, verify the runner's scheduled job, then report"

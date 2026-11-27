@@ -20,18 +20,20 @@
 #   2. Broadcast: writes .history/SHUTDOWN.md and one SHUTDOWN inbox row in
 #      every task with a live claim (DECLARED / GRANTED / EXECUTING /
 #      CHALLENGED), then nudges each such task's registered worker pane
-#      directly (same pre-checked send_wake as plane-watch.sh) so delivery
-#      does not depend on the watcher staying alive.
+#      directly (shared send_wake from wake.sh) so delivery does not depend
+#      on the runner staying alive.
 #   3. Stops managed servers via server.sh stop only (blessed path, live
 #      verification) — an unverifiable server is reported, never raw-killed.
-#   4. Writes .history/._watcher_stop (the watcher exits at once — the
-#      marker's creation wakes its read), cleans the pane registry, appends
-#      the shutdown record to SHUTDOWN.md, releases plane.lock.
+#   4. Calls runner.sh uninstall (removes the scheduled job), writes
+#      .history/._watcher_stop (the runner exits at once — the filename is
+#      kept so live systems mid-migration are not broken), cleans the pane
+#      registry, appends the shutdown record to SHUTDOWN.md, releases
+#      plane.lock.
 #   5. Prints the still-live claims so the human knows which sessions to
 #      close or kill. Unreleased claims are left for the next boot's STALE
 #      handling — shutdown.sh never force-releases a claim.
 # Exit: 0 = shutdown signalled and plane-side teardown done · 2 = refused.
-# Windows: run the steps by hand (no watcher/tmux on Windows).
+# Windows: run the steps by hand (no runner/tmux on Windows).
 set -u
 
 ROOT="${1:-$(cd "$(dirname "$0")/../../.." && pwd -P)}"
@@ -41,6 +43,10 @@ cd "$ROOT" || { echo "SHUTDOWN-FAIL: cannot cd to project root $ROOT" >&2; exit 
 [ -d .history ] || { echo "SHUTDOWN-FAIL: no .history/ under $ROOT" >&2; exit 2; }
 AGENT_CMD="${PLANE_AGENT_CMD:-claude}"
 log() { printf '%s\n' "$*"; }
+# Shared claim-row parser (v6.5, L-C4) + shared wake helper — sourced
+# before any parsing or waking. wake.sh's send_wake calls this log().
+. "$BIN/claim-rows.sh" 2>/dev/null || { echo "claim-rows.sh missing under $BIN — reinstall the package" >&2; exit 1; }
+. "$BIN/wake.sh" 2>/dev/null || { echo "wake.sh missing under $BIN — reinstall the package" >&2; exit 1; }
 
 # >>> agent-cmd matcher (keep identical in domain-guard.sh + declare-role.sh; selftest diffs them)
 # is_agent_cmd "<cmdline>" — true iff the cmdline is the agent CLI itself:
@@ -90,37 +96,8 @@ declared_role() {
   grep '^role=' "$reg" 2>/dev/null | head -1 | cut -d= -f2
 }
 
-# send_wake — copied from plane-watch.sh (same pre-checks: the pane must
-# exist, be alive, and be running the agent CLI; a pane is never guessed).
-state_put() { :; }
-send_wake() { # send_wake <pane> <message> <who> — tmux pre-check + one wake line
-  local pane="$1" message="$2" who="$3" info dead cmd agent_lc cmd_lc
-  if [ -z "$pane" ]; then log "no pane registered for $who — polling only"; return 0; fi
-  command -v tmux >/dev/null 2>&1 || { log "tmux missing — cannot wake $who pane $pane, polling only"; return 0; }
-  info="$(tmux display-message -p -t "$pane" '#{pane_dead}|#{pane_current_command}' 2>/dev/null || true)"
-  if [ -z "$info" ]; then log "refusing wake: $who pane $pane does not exist"; return 0; fi
-  dead="${info%%|*}"; cmd="${info#*|}"
-  if [ -z "$dead" ]; then log "refusing wake: $who pane $pane does not exist"; return 0; fi # target invalid (tmux prints an empty format instead of failing)
-  agent_lc="$(printf '%s' "$AGENT_CMD" | tr '[:upper:]' '[:lower:]')"
-  cmd_lc="$(printf '%s' "$cmd" | tr '[:upper:]' '[:lower:]')"
-  if [ "$dead" != "0" ]; then log "refusing wake: $who pane $pane is dead"; return 0; fi
-  case "$cmd_lc" in *"$agent_lc"*) ;; *) log "refusing wake: $who pane $pane runs '$cmd', not the agent ($AGENT_CMD)"; return 0 ;; esac
-  tmux send-keys -t "$pane" "$message" Enter 2>/dev/null \
-    && log "woke $who pane $pane" \
-    || log "send-keys to $who pane $pane failed"
-}
-
 live_rows() { # live_rows <workers.md> — "num|worker|phase|status" per live claim
-  awk -F'|' '
-    function trim(x) { gsub(/^ +| +$/,"",x); return x }
-    /^\|[ ]*#[ ]*\|/ && !hdr {
-      for (i=2; i<=NF; i++) { h=trim($i); sub(/#.*/,"",h); if (h=="Status") si=i; if (h=="Phase") pi=i; if (h=="Worker") wi=i }
-      hdr=1; next }
-    /^\|[ ]*[0-9]+[ ]*\|/ {
-      if (!si) { si=10; pi=6; wi=3 }
-      s=trim($si)
-      if (s=="DECLARED" || s=="GRANTED" || s=="EXECUTING" || s=="CHALLENGED")
-        print trim($2) "|" trim($wi) "|" trim($pi) "|" s }' "$1" 2>/dev/null
+  claim_rows "$1" 2>/dev/null | awk -F'\t' '{split($4,w," "); if (w[1]=="DECLARED" || w[1]=="GRANTED" || w[1]=="EXECUTING" || w[1]=="CHALLENGED") print $1"|"$2"|"$3"|"w[1]}'
 }
 
 # 1. role check
@@ -179,7 +156,8 @@ for d in .history/*/; do
   esac
 done
 
-# 4. watcher stop, pane registry, record, lock
+# 4. runner stop, pane registry, record, lock
+bash "$BIN/runner.sh" uninstall 2>&1 | sed 's/^/runner: /' || echo "runner: uninstall failed — remove the scheduled job by hand"
 : > .history/._watcher_stop
 rm -f .history/._plane_pane
 rm -rf .history/._worker_panes
@@ -188,7 +166,7 @@ rm -rf .history/._worker_panes
   if [ -n "$live_list" ]; then printf 'claims still live at exit (human closes/kills these sessions):\n%s' "$live_list"; else echo "claims still live at exit: none"; fi
 } >> .history/SHUTDOWN.md
 bash "$BIN/lock.sh" release 2>&1 | sed 's/^/lock: /'
-echo "watcher: stop marker written (it exits on it); pane registry cleaned; plane.lock released"
+echo "runner: scheduled job removed, stop marker written (it exits on it); pane registry cleaned; plane.lock released"
 
 # 5. report
 if [ -n "$live_list" ]; then
@@ -197,4 +175,4 @@ if [ -n "$live_list" ]; then
 else
   echo "== no live claims"
 fi
-echo "== shutdown done (fire-and-forget). Delete your durable backstop wake, then end this session."
+echo "== shutdown done (fire-and-forget). The runner job is removed by shutdown.sh itself; end this session."

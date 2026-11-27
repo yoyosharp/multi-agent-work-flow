@@ -5,6 +5,8 @@
 #                         closecheck.sh anchors <task-slug>   (v5 anchor gate)
 #                         closecheck.sh ratify <task-slug> <worktree-name>  (v6 ratify walk)
 #                         closecheck.sh risk <task-slug>                   (v6 risk gate)
+# Shared claim-row parser + CLOSE extractor (v6.5, L-C4/L-C5) — sourced before the cd to root.
+. "$(dirname "$0")/claim-rows.sh" 2>/dev/null || { echo "claim-rows.sh missing under $(dirname "$0") — reinstall the package" >&2; exit 1; }
 set -u
 cd "$(dirname "$0")/../../.." || exit 1
 
@@ -13,7 +15,7 @@ anchors_mode() {
   d=".history/${1%/}/"
   [ -d "$d" ] || { echo "no task dir $d"; exit 1; }
   wl="${d}worklog.md"; [ -f "$wl" ] || { echo "ANCHOR-FAIL: no worklog"; exit 1; }
-  close_txt=$(awk '/CLOSE/{found=1; buf=""} found{buf=buf"\n"$0} END{printf "%s", buf}' "$wl")
+  close_txt=$(close_text "$wl")
   [ -n "$(printf '%s' "$close_txt" | tr -d '[:space:]')" ] || { echo "ANCHOR-FAIL: no CLOSE entry found"; exit 1; }
   verdict=ANCHOR-PASS
   printf '%s' "$close_txt" | grep -qE '(mvn |\[PASS|\[FAIL|BUILD SUCCESS|BUILD FAILURE|[Vv]erdict|WAIVED|waived)' \
@@ -53,7 +55,7 @@ ratify_mode() {
   [ -d "$d" ] || { echo "no task dir $d"; exit 1; }
   [ -d "$w" ] || { echo "no worktree $w"; exit 1; }
   wl="${d}worklog.md"; [ -f "$wl" ] || { echo "RATIFY-FAIL: no worklog"; exit 1; }
-  close_txt=$(awk '/CLOSE/{found=1; buf=""} found{buf=buf"\n"$0} END{printf "%s", buf}' "$wl")
+  close_txt=$(close_text "$wl")
   [ -n "$(printf '%s' "$close_txt" | tr -d '[:space:]')" ] || { echo "RATIFY-FAIL: no CLOSE entry found"; exit 1; }
   # tokens come from the CLOSE text minus the chain: line (track C gap 4) —
   # a 64-hex chain hash would otherwise match as a 40-hex SHA prefix.
@@ -89,18 +91,10 @@ risk_mode() {
   d=".history/${1%/}/"
   [ -d "$d" ] || { echo "no task dir $d"; exit 1; }
   wm="${d}workers.md"; [ -f "$wm" ] || { echo "RISK-FAIL: no workers.md"; exit 1; }
-  rows=$(awk -F'|' '
-    function trim(x) { gsub(/^ +| +$/,"",x); return x }
-    /^\|[ ]*#[ ]*\|/ && !hdr {
-      for (i=2; i<=NF; i++) { h=trim($i); sub(/#.*/,"",h); if (h=="Status") si=i; if (h=="Risk") ri=i }
-      hdr=1; next
-    }
-    /^\|[ ]*[0-9]+[ ]*\|/ {
-      if (ri == "") { print "NORISK"; exit }
-      print trim($2) "|" trim($si) "|" trim($ri)
-    }' "$wm" 2>/dev/null)
+  rows=$(claim_rows "$wm" | awk -F'\t' '{print $1"|"$4"|"$5}')
   [ -n "$rows" ] || { echo "risk: no claim rows"; exit 0; }
-  case "$rows" in NORISK*) echo "note: no Risk column — rows predate gap 3, treated as unrecorded"; exit 0 ;; esac
+  # No Risk column in the header = pre-v6 rows, treated as unrecorded (not low).
+  grep -qE '^\|.*\|[ ]*Risk[ ]*\|' "$wm" || { echo "note: no Risk column — rows predate gap 3, treated as unrecorded"; exit 0; }
   fail=0
   confirmed=0
   [ -f "${d}qa.md" ] && grep -qE '^\|[^|]*\|[^|]*[Rr]isk[^|]*\|[^|]*RELEASED[^|]*\|' "${d}qa.md" && confirmed=1

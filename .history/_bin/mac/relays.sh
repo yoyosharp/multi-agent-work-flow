@@ -9,6 +9,12 @@
 set -u
 cd "$(dirname "$0")/../../.." || exit 1
 RELAY_STALE="${RELAY_STALE:-1800}"
+# Portable mtime (v6.5, Q-P1): GNU stat -c %Y, BSD stat -f %m.
+if stat -c %Y /dev/null >/dev/null 2>&1; then STAT_GNU=1; else STAT_GNU=0; fi
+mtime() {
+  if [ "$STAT_GNU" -eq 1 ]; then stat -c %Y "$1" 2>/dev/null
+  else stat -f %m "$1" 2>/dev/null; fi
+}
 
 for d in .history/*/; do
   wm="$d/workers.md"
@@ -36,9 +42,14 @@ for d in .history/*/; do
     [ "${opens:-0}" -gt 0 ] && out="${out}    review: OPEN PASS — $opens finding(s) after last 'Pass complete' marker (not actionable yet)\n"
   fi
 
+  if [ -f "${d}plan.md" ]; then
+    pend=$(awk -F'|' '/^\|[ ]*D[0-9]/ {n=split($0,a,"|"); s=a[n-1]; gsub(/^ +| +$/,"",s); if (s=="OPEN" || s ~ /^ADJUDICATED/) {gsub(/^ +| +$/,"",a[2]); gsub(/^ +| +$/,"",a[3]); print "    [held—surface at next reply] plan "a[2]": "a[3]}}' "${d}plan.md")
+    [ -n "$pend" ] && out="$out$pend\n"
+  fi
+
   if [ -f "${d}inbox.md" ]; then
     rows=$(grep -cE '^\|' "${d}inbox.md")
-    age=$(( $(date +%s) - $(stat -c %Y "${d}inbox.md") ))
+    age=$(( $(date +%s) - $(mtime "${d}inbox.md") ))
     if [ "$rows" -gt 2 ] && [ "$age" -gt "$RELAY_STALE" ]; then
       out="${out}    inbox: $((rows-2)) message(s), ${age}s old (> RELAY_STALE ${RELAY_STALE}s)\n"
     fi

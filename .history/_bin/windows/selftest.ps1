@@ -212,6 +212,8 @@ if (Select-String -Path 'docs\workflow\verify-duties.md' -Pattern 'Test-result r
 else { "  SELFTEST-FAIL: verify-duties lost the test-result-review gate"; $fail = 1 }
 if ((Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern 'Agent sessions are launched by the human' -Quiet) -and (Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern "the plane spawns a terminal session for a phase agent only on the human's explicit order" -Quiet) -and (Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern 'the plane spawns the reviewer itself — a plane-owned sub-agent, not a terminal session' -Quiet)) { "  ok: spawn model corrected in pm.md (v6.3): human launches, plane spawns a terminal session only on explicit order, reviewer sub-agent auto-spawned" }
 else { "  SELFTEST-FAIL: spawn model lost from pm.md (v6.3 correction)"; $fail = 1 }
+if (Select-String -Path 'docs\\workflow\\control-plane-pm.md' -Pattern 'Workers never dispatch plan-review' -Quiet) { "  ok: pm.md forbids worker plan-review dispatch (v6.4.3)" }
+else { "  SELFTEST-FAIL: pm.md lost the worker plan-review dispatch forbid"; $fail = 1 }
 if (Select-String -Path 'docs\workflow\control-plane-pm.md','docs\workflow\control-plane-instructions.md','docs\workflow\verify-duties.md' -Pattern 'launches nothing' -Quiet) { "  SELFTEST-FAIL: stale 'launches nothing' wording present in plane docs"; $fail = 1 }
 else { "  ok: no stale 'launches nothing' wording in plane docs" }
 if ((Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern 'never stops to ask' -Quiet) -and (Select-String -Path 'docs\workflow\async-inputs.md' -Pattern 'WAIVE <slug>' -Quiet)) { "  ok: §6 defaults to campaign: no blocking ask, waive by charter or WAIVE relay" }
@@ -219,35 +221,71 @@ else { "  SELFTEST-FAIL: §6 lost the default-campaign rule"; $fail = 1 }
 if (Select-String -Path 'docs\workflow\control-plane-pm.md' -Pattern 'pending decision, not an answer' -Quiet) { "  SELFTEST-FAIL: stale §6 blocking-wait wording present in pm.md"; $fail = 1 }
 else { "  ok: no stale §6 blocking-wait wording in pm.md" }
 
-"== /shutdown (v6.1): plane-only command, watcher/backstop stop, release flow"
+"== v6.5 gates: plan template, keys map, old-shape parser, FIFO, forbid"
+if ((Test-Path '.history\_templates\plan.template.md') -and (Select-String -Path '.history\_templates\plan.template.md' -Pattern 'A-slot' -Quiet)) { "  ok: plan template present with an A-slot per decision" }
+else { "  SELFTEST-FAIL: plan template missing or has no A-slot"; $fail = 1 }
+if ((Test-Path 'docs\workflow\keys.md') -and (Select-String -Path 'docs\workflow\keys.md' -Pattern 'frozen' -Quiet)) { "  ok: keys map present (one frozen table)" }
+else { "  SELFTEST-FAIL: keys.md missing or not frozen"; $fail = 1 }
+if ((Test-Path 'docs\workflow\delivery.md') -and (Select-String -Path 'docs\workflow\delivery.md' -Pattern 'Delivery checklist' -Quiet)) { "  ok: plane-side delivery checklist present" }
+else { "  SELFTEST-FAIL: delivery.md missing"; $fail = 1 }
+if ((Test-Path 'docs\workflow\core-spec.md') -and ((Select-String -Path 'docs\workflow\core-spec.md' -Pattern '^[0-9]+\. \*\*' -AllMatches).Count -eq 45)) { "  ok: core spec carries the 45 items" }
+else { "  SELFTEST-FAIL: core-spec.md missing or does not carry 45 items"; $fail = 1 }
+if (Select-String -Path (Join-Path $AgentDir 'commands\helper.md') -Pattern 'docs\\workflow\\keys.md' -Quiet) { "  ok: helper allowlist carries the exact-file keys.md carve-out" }
+else { "  SELFTEST-FAIL: helper.md lost the keys.md carve-out"; $fail = 1 }
+if ((Select-String -Path 'docs\workflow\verify-duties.md' -Pattern 'FIFO' -Quiet) -and (Select-String -Path 'docs\workflow\control-plane-instructions.md' -Pattern 'FIFO' -Quiet)) { "  ok: CLOSE verify is FIFO — oldest WAITING first" }
+else { "  SELFTEST-FAIL: FIFO fairness rule missing from verify-duties or control-plane-instructions"; $fail = 1 }
+if ((Select-String -Path (Join-Path $AgentDir 'commands\worker.md') -Pattern 'never dispatch' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'skills\plan-review\SKILL.md') -Pattern 'never dispatches plan-review' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'skills\pre-test-review\SKILL.md') -Pattern 'never dispatches §3.1' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'skills\test-result-review\SKILL.md') -Pattern 'never dispatches test-result-review' -Quiet)) { "  ok: forbid rule stated in worker.md + all three review skills (v6.4.3)" }
+else { "  SELFTEST-FAIL: forbid rule missing from a review skill or worker.md"; $fail = 1 }
+# F2: the shared parser reads the old-shape workers.md (no # column).
+$pf = Join-Path $work 'parser-f2-root'
+New-Item -ItemType Directory -Path "$pf\.history\_bin\windows" -Force | Out-Null
+Copy-Item (Join-Path $bin 'claim-rows.ps1') "$pf\.history\_bin\windows\claim-rows.ps1"
+Set-Content -Path "$pf\workers-old.md" -Value "| Worker | Host:Pid | Launched-by | Phase | Write domain | Resource tokens | Claimed-at | Status | Granted-at | Notes |`n|---|---|---|---|---|---|---|---|---|---|`n| worker-cc-2 | host:1234 | human | impl | wt | - | t | RELEASED | t | - |"
+$probe = Join-Path $pf 'probe.ps1'
+@"
+. "$pf\.history\_bin\windows\claim-rows.ps1"
+`$rows = Get-ClaimRows "$pf\workers-old.md"
+`$rows | ForEach-Object { "`$(`$_.Num)|`$(`$_.Worker)|`$(`$_.Phase)|`$(`$_.Status)" }
+"@ | Set-Content -Path $probe
+$probeOut = & powershell -File $probe 2>$null
+if ($probeOut -match 'worker-cc-2\|worker-cc-2\|impl\|RELEASED') { "  ok: Get-ClaimRows parses the old-shape workers.md (F2)" }
+else { "  SELFTEST-FAIL: Get-ClaimRows did not parse the old-shape workers.md: $probeOut"; $fail = 1 }
+
+"== /shutdown (v6.1): plane-only command, runner stop, release flow"
 # Windows-run-only for the behavioral parts (no PowerShell host on the
 # build machine); the static assertions run wherever the file is read.
 if ((Test-Path (Join-Path $AgentDir 'commands\shutdown.md')) -and (Select-String -Path (Join-Path $AgentDir 'commands\shutdown.md') -Pattern 'shutdown.sh' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'commands\shutdown.md') -Pattern 'refuses' -Quiet)) { "  ok: shutdown command present with the plane-only role check" }
 else { "  SELFTEST-FAIL: shutdown command missing or lost the plane-only role check"; $fail = 1 }
 # the marker is plane-only by hook rule 3 (bash hook — no Windows port, so
 # the denial is proven by the linux/mac selftest, not here).
-if (Select-String -Path (Join-Path $bin 'plane-poll.ps1') -Pattern '_watcher_stop' -Quiet) { "  ok: plane-poll.ps1 checks the stop marker" }
-else { "  SELFTEST-FAIL: plane-poll.ps1 has no stop-marker check"; $fail = 1 }
-# plane-poll exits at once on the stop marker (fixture: scratch tree
+if (Select-String -Path (Join-Path $bin 'runner.ps1') -Pattern '_watcher_stop' -Quiet) { "  ok: runner.ps1 checks the stop marker" }
+else { "  SELFTEST-FAIL: runner.ps1 has no stop-marker check"; $fail = 1 }
+# runner exits at once on the stop marker (fixture: scratch tree
 # carrying the script; tick.ps1 fails with no lock, so the baseline is
-# nonzero and the marker run must be 0 with no schedule dir).
-$pp = Join-Path $work 'shutdown-poll-root'
+# nonzero and the marker run must be 0 with no state dir).
+$pp = Join-Path $work 'shutdown-runner-root'
 New-Item -ItemType Directory -Path "$pp\.history\_bin\windows" -Force | Out-Null
-Copy-Item (Join-Path $bin 'plane-poll.ps1') "$pp\.history\_bin\windows\plane-poll.ps1"
+Copy-Item (Join-Path $bin 'runner.ps1') "$pp\.history\_bin\windows\runner.ps1"
 Copy-Item (Join-Path $bin 'tick.ps1') "$pp\.history\_bin\windows\tick.ps1"
-$null = & powershell -File "$pp\.history\_bin\windows\plane-poll.ps1" 2>$null; $ppCode = $LASTEXITCODE
-if ($ppCode -ne 0) { "  ok: without the marker, plane-poll runs tick and fails with no lock" }
-else { "  SELFTEST-FAIL: plane-poll passed with no lock — the no-marker baseline is broken"; $fail = 1 }
-$pp2 = Join-Path $work 'shutdown-poll-root2'
+Copy-Item (Join-Path $bin 'claim-rows.ps1') "$pp\.history\_bin\windows\claim-rows.ps1"
+Copy-Item (Join-Path $bin 'stale.ps1') "$pp\.history\_bin\windows\stale.ps1"
+Copy-Item (Join-Path $bin 'relays.ps1') "$pp\.history\_bin\windows\relays.ps1"
+$null = & powershell -File "$pp\.history\_bin\windows\runner.ps1" 2>$null; $ppCode = $LASTEXITCODE
+if ($ppCode -ne 0) { "  ok: without the marker, runner runs tick and fails with no lock" }
+else { "  SELFTEST-FAIL: runner passed with no lock — the no-marker baseline is broken"; $fail = 1 }
+$pp2 = Join-Path $work 'shutdown-runner-root2'
 New-Item -ItemType Directory -Path "$pp2\.history\_bin\windows" -Force | Out-Null
-Copy-Item (Join-Path $bin 'plane-poll.ps1') "$pp2\.history\_bin\windows\plane-poll.ps1"
+Copy-Item (Join-Path $bin 'runner.ps1') "$pp2\.history\_bin\windows\runner.ps1"
 Copy-Item (Join-Path $bin 'tick.ps1') "$pp2\.history\_bin\windows\tick.ps1"
+Copy-Item (Join-Path $bin 'claim-rows.ps1') "$pp2\.history\_bin\windows\claim-rows.ps1"
+Copy-Item (Join-Path $bin 'stale.ps1') "$pp2\.history\_bin\windows\stale.ps1"
+Copy-Item (Join-Path $bin 'relays.ps1') "$pp2\.history\_bin\windows\relays.ps1"
 New-Item -ItemType File -Path "$pp2\.history\._watcher_stop" -Force | Out-Null
-$null = & powershell -File "$pp2\.history\_bin\windows\plane-poll.ps1" 2>$null; $ppCode = $LASTEXITCODE
-if ($ppCode -eq 0) { "  ok: plane-poll exits 0 on the stop marker without running tick" }
-else { "  SELFTEST-FAIL: plane-poll did not exit cleanly on the stop marker"; $fail = 1 }
-if (-not (Test-Path "$pp2\.history\._poll_schedule")) { "  ok: plane-poll with the marker runs no scans (no schedule dir)" }
-else { "  SELFTEST-FAIL: plane-poll with the marker still ran scans"; $fail = 1 }
+$null = & powershell -File "$pp2\.history\_bin\windows\runner.ps1" 2>$null; $ppCode = $LASTEXITCODE
+if ($ppCode -eq 0) { "  ok: runner exits 0 on the stop marker without running tick" }
+else { "  SELFTEST-FAIL: runner did not exit cleanly on the stop marker"; $fail = 1 }
+if (-not (Test-Path "$pp2\.history\._runner_state")) { "  ok: runner with the marker runs no scans (no state dir)" }
+else { "  SELFTEST-FAIL: runner with the marker still ran scans"; $fail = 1 }
 # worker release flow on the shutdown signal (fixture: signal -> checkpoint
 # -> RELEASED -> session-end log), as the plane observes it.
 $sd = Join-Path $work 'shutdown-release'

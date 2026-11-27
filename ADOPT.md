@@ -1,6 +1,6 @@
 # Adopting the workflow from `.workflow/` — agent guide
 
-Status: **v6.4.1 (2026-11-24).** Ships in the package as `ADOPT.md`.
+Status: **v6.5 (2026-11-27).** Ships in the package as `ADOPT.md`.
 Decisions recorded in §1; the model is the rule, not a proposal.
 
 ## 0. Read first — the model
@@ -64,15 +64,20 @@ Moving the live files under `.workflow/` is a separate, larger change
   and a fresh clone of the project has no `.workflow/` — the adopting
   agent must clone it first (§3 step 1).
 - `0.scratch/` **stays** (see §6). `.workflow/` does not replace it.
-- `workflow-init` **stays, unmodified in v6.4.1** (see §7): copy-first
-  (§3 step 3a). The template-path modification is deferred.
-- Helper allowlist: **kept as-is (v6.4.1 decision)** — the helper does
-  not get `.workflow/` write access. It provides the migration /
+- `workflow-init` **stays (v6.5)** (see §7): copy-first
+  (§3 step 3a). The template location is a user-declared input (a URL →
+  clone; a local path → copy); the init-takes-template-dir modification
+  is deferred.
+- Helper allowlist: **kept as-is (v6.5 decision)** — the helper does
+  not get `.workflow/` write access, except the exact file
+  `docs/workflow/keys.md` (the key map — the helper decides key promotion
+  from the plane's suggestions). It provides the migration /
   optimization report (plan) in `0.scratch/`; the agent that does the
   optimization applies it (via init repair). See §4 step 8 and §5.
 
-Decisions resolved for v6.4.1: helper scope (kept as-is, reports only);
-init (copy-first, unmodified); delivery (nested clone + gitignore).
+Decisions resolved for v6.5: helper scope (kept as-is, reports only);
+init (copy-first; template location is a user-declared input); delivery
+(nested clone + gitignore).
 Deferred: the init template-path variant (§7).
 
 ## 2. Prerequisites
@@ -116,12 +121,12 @@ Deferred: the init template-path variant (§7).
    copy is the live install.
 4. **Pre-install check first, before any write.** Run
    `.history/_bin/<platform>/init.sh --check-only`
-   (Windows: `init.ps1 -Harness claude -CheckOnly`). A hard-floor
+   (Windows: `init.ps1 -Harness <claude|codex> -CheckOnly`). A hard-floor
    failure (no git, not a git work tree, templates missing) aborts the
    adopt: report it to the human and stop. No writes happen before this
    check passes.
 5. **Run init.** `.history/_bin/<platform>/init.sh [project-root]`
-   (Windows: `init.ps1 -Harness claude -Root <project-root>`). It is
+   (Windows: `init.ps1 -Harness <claude|codex> -Root <project-root>`). It is
    idempotent: creates what is missing, keeps what exists, never
    overwrites an adapted file or `.history/_bin/api-config.env`, and
    prints an `INIT-RECEIPT`. Read `.history/_init_receipt.md` — it is
@@ -133,8 +138,7 @@ Deferred: the init template-path variant (§7).
    URL, account, session header, envelope, and auth endpoints; then
    run one `api.sh login` smoke test. If the project does not use
    `api.sh`, leave `api-config.env` as the template — init is complete
-   without it. Fill it later, when the API is actually needed. The
-   template's worked example is a reference, not values.
+   without it. Fill it later, when the API is actually needed.
 7. **Adoption checklists.** Fill every `<...>` placeholder left in the
    installed specs; delete checklist blocks that do not apply. Anything
    the receipt FLAGGED as adapted must go to the human for migration —
@@ -148,7 +152,7 @@ Deferred: the init template-path variant (§7).
 9. **Hook live-probe** — only if this machine's CLI version was never
    probed: one headless out-of-domain edit must block (exit 2, file
    untouched). A passed script smoke test is not a live probe.
-10. **Register the plane wake** (`plane-poll` at HOT_RATE, 3 min) and
+10. **Register the runner** (cron / Task Scheduler, every 3 min) and
     verify it before declaring boot complete.
 11. **Verify** (adopt is not complete until all pass) — see §7.
 
@@ -188,15 +192,17 @@ Deferred: the init template-path variant (§7).
    step needs none. But no amount of asking removes the allowlist at
    apply time: the hook enforces it on every write, on demand or not.
 
-## 5. Helper allowlist — kept as-is (v6.4.1 decision)
+## 5. Helper allowlist — kept as-is (v6.5 decision)
 
-Decision (v6.4.1): the helper keeps its v6.2 fail-closed allowlist. No
+Decision (v6.5): the helper keeps its v6.2 fail-closed allowlist. No
 `.workflow/` write is added. The helper's part in adopt/migrate is the
 report: it diffs the new template against the install and writes the
 migration / optimization plan into `0.scratch/`; the agent that does
 the optimization applies it (via init repair). The helper may write
 `.history/_bin/**`, `0.scratch/**`, memory files (`MEMORY.md`,
-`project_*.md`) and `*.local.json`. It is **denied** `.agent/`,
+`project_*.md`) and `*.local.json` — plus the exact file
+`docs/workflow/keys.md` (the key map; the helper decides key promotion
+from the plane's suggestions). It is **denied** `.agent/`,
 `.claude/*`, `_templates/`, shared `settings.json`, plan, code, and
 task evidence. The two files that encode this are
 `.agent/hooks/domain-guard.sh` (the `under` check and the deny message)
@@ -231,18 +237,20 @@ only safe if the scratch is somewhere the refresh never touches, which
 is exactly what `0.scratch/` already is. Dropping it saves one folder
 and buys a wipe-on-refresh footgun.
 
-## 7. `workflow-init` — unmodified in v6.4.1 (copy-first), modify later
+## 7. `workflow-init` — template location is a user-declared input (v6.5), copy-first stays
 
 Init is still necessary: it does the scaffolding, the receipt, the
-floor check and the verification discipline. In v6.4.1 it stays
-unmodified — Procedure A step 3(a) (copy the template to root, run init
-unchanged) is the shipped path. The modification (init takes the
-template dir `.workflow/` as its source instead of assuming the package
-is already at the root — i.e. §3 step 1 of the skill becomes "read the
-package from the template dir (default: project root for the old zip
-flow)") is deferred to a later version. Dropping init entirely would
-leave the adopt/migrate as manual steps with no receipt and no
-verification — don't.
+floor check and the verification discipline. In v6.5 the skill takes
+the template location as a user-declared input (a URL → clone; a local
+path → copy) — the adoption takes it as an input instead of the docs
+prescribing copy vs clone. Procedure A step 3(a) (copy the template to
+root, run init unchanged) is the shipped path. The modification (init
+takes the template dir `.workflow/` as its source instead of assuming
+the package is already at the root — i.e. §3 step 1 of the skill
+becomes "read the package from the template dir (default: project root
+for the old zip flow)") is deferred to a later version. Dropping init
+entirely would leave the adopt/migrate as manual steps with no receipt
+and no verification — don't.
 
 ## 8. Failure modes
 
@@ -267,12 +275,12 @@ verification — don't.
   the current branch at the root (and refuses on unrelated histories).
   It cannot target `.workflow/`. Pulls happen inside the nested clone
   only; the parent never merges the workflow history.
-- **Degraded floor** (no hook support, no tmux, no watcher tool, no
-  Python runtime): the install still works as v5.3 polling-only, but
+- **Degraded floor** (no hook support, no tmux, no scheduler, no
+  Python runtime): the install still works as polling-only, but
   the receipt must say so and you must tell the human — never present
   a degraded install as a full one. The 3-minute poll is not a timer
   by itself: on Windows it needs an external trigger (Task Scheduler
-  running `plane-poll.ps1`, or another session resuming the plane).
+  running `runner.ps1`, or another session resuming the plane).
 
 ## 9. Verification checklist (adopt and migrate alike)
 

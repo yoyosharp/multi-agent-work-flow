@@ -9,3 +9,8 @@ is assumed. Append an acknowledgement when consumed; never delete a row.
 
 | Time | From | To | Phase | Message |
 |------|------|-----|-------|---------|
+
+Relay vocabulary (canonical inbox rows the board / plane emit for the
+gates): `PLAN-APPROVED` / `WAIVE` / `FINAL-REVIEW-CONFIRMED` /
+`DELIVERY-APPROVED` / `TASK-COMPLETE` / `CLEANUP` / `SHUTDOWN`. Append
+`Ack: <HH:MM>` to a row when it is consumed; never delete a row.

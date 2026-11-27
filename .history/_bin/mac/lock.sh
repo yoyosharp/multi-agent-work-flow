@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # plane.lock manager — the only script allowed to write plane.lock.
 # macOS variant: mtime via BSD stat -f; no /proc — holder verification is
-# best-effort (ps -p), artifacts still decide.
+# lsof -p <pid> (cwd check, v6.5 P-2), falling back to ps -p liveness
+# when lsof gives no cwd.
 # Usage: lock.sh status | take | heartbeat | release
 set -u
 cd "$(dirname "$0")/../../.." || exit 1
@@ -14,10 +15,13 @@ LOCK_STALE="${LOCK_STALE:-3600}"
 
 age_of() { local f=$1; [ -f "$f" ] && echo $(( $(date +%s) - $(stat -f %m "$f") )) || echo -1; }
 
-pid_alive_matches() { # $1 = "host:pid" — best-effort on macOS (no /proc)
+pid_alive_matches() { # $1 = "host:pid" — mac: lsof -p <pid> cwd check (no /proc); same rule as linux (cwd == $PWD or dirname(cwd) == dirname($PWD)); falls back to ps -p liveness when lsof gives no cwd
   local pid=${1##*:}
   [ "$pid" -gt 0 ] 2>/dev/null || return 1
-  ps -p "$pid" -o comm= >/dev/null 2>&1
+  ps -p "$pid" >/dev/null 2>&1 || return 1
+  local cwd; cwd=$(lsof -p "$pid" 2>/dev/null | awk '$4 == "cwd" {print $NF; exit}')
+  [ -z "$cwd" ] && return 0
+  [ "$(dirname "$cwd")" = "$(dirname "$PWD")" -o "$cwd" = "$PWD" ]
 }
 
 status() {
@@ -29,11 +33,11 @@ status() {
   holder=$(grep '^host:pid ' "$LOCK" | grep -oE '[A-Za-z0-9_-]+:[0-9]+' | head -1)
   age=$(age_of "$LOCK")
   if pid_alive_matches "$holder"; then
-    echo "lock: HELD by $holder (pid alive, best-effort), age ${age}s"
+    echo "lock: HELD by $holder (pid alive, cwd matches), age ${age}s"
   elif [ "$age" -gt "$LOCK_STALE" ]; then
-    echo "lock: STALE (age ${age}s > ${LOCK_STALE}s), recorded $holder — pid dead/unverifiable"
+    echo "lock: STALE (age ${age}s > ${LOCK_STALE}s), recorded $holder — pid dead/unmatched"
   else
-    echo "lock: FRESH-HELD by $holder, age ${age}s (holder pid not verifiable — artifacts decide)"
+    echo "lock: FRESH-HELD by $holder, age ${age}s (holder pid dead or cwd unmatched — artifacts decide)"
   fi
 }
 
@@ -49,7 +53,7 @@ case "${1:-status}" in
       age=$(age_of "$LOCK")
       holder=$(grep '^host:pid ' "$LOCK" | grep -oE '[A-Za-z0-9_-]+:[0-9]+' | head -1)
       if pid_alive_matches "$holder"; then echo "REFUSED: live lock held by $holder"; exit 1; fi
-      [ "$age" -le "$LOCK_STALE" ] && { echo "REFUSED: lock age ${age}s <= ${LOCK_STALE}s but pid unverifiable — escalate to human"; exit 1; }
+      [ "$age" -le "$LOCK_STALE" ] && { echo "REFUSED: lock age ${age}s <= ${LOCK_STALE}s but pid dead or cwd unmatched — escalate to human"; exit 1; }
       echo "taking over stale lock (prior: $holder, ${age}s, pid verified dead/unmatched)"
     fi
     printf 'host:pid %s:%s\nacquired %s\n' "$(hostname)" "$$" "$(date '+%F %T')" > "$LOCK"

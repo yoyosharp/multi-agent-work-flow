@@ -40,12 +40,11 @@ allowlisting. These are recommendations, not active grants:
 
 | Role | Linux/macOS | Windows |
 |---|---|---|
-| Control plane | `.history/_bin/<platform>/plane-poll.sh` | `powershell -File .history\_bin\windows\plane-poll.ps1` |
-| Control plane | `.history/_bin/<platform>/plane-watch.sh` (backgrounded) | — (no watcher on Windows yet) |
+| Control plane | `.history/_bin/<platform>/runner.sh` (scheduled, every 3 min) | `powershell -File .history\_bin\windows\runner.ps1` (Task Scheduler, every 3 min) |
 | Worker | `.history/_bin/<platform>/tick.sh --diff <slug>` | `powershell -File .history\_bin\windows\tick.ps1 -Diff -Slugs <slug>` |
 | Worker | `.history/_bin/<platform>/server.sh <start\|stop\|status> <slug>` — tasks holding the manual-test token only | `powershell -File .history\_bin\windows\server.ps1 <slug> <start\|stop\|status>` |
 
-The plane poll invokes `tick`, `stale`, and `relays`; pre-grant those bundled
+The runner invokes `tick`, `stale`, and `relays`; pre-grant those bundled
 script paths too if the harness checks nested invocations. Also pre-grant the
 verification and evidence helpers the plane and closing workers run —
 `closecheck.sh` (both modes), `delivery.sh`, and, for tasks holding the

@@ -1,5 +1,10 @@
 ﻿# plane.lock manager — the only script allowed to write plane.lock.
 # Windows/PowerShell variant: pid liveness via Get-Process (host must match).
+# No worktree-cwd binding: there is no reliable pure-PowerShell mechanism
+# to read a process's cwd without P/Invoke PEB reading, which is too
+# fragile for a lock gate — rejected (v6.5 P-12). Windows binding stays
+# live-pid (Get-Process) + age (LOCK_STALE); the missing cwd check is a
+# disclosed gap.
 # Usage: powershell -File .history\_bin\windows\lock.ps1 [status|take|heartbeat|release]
 param([string]$Action = 'status')
 $ErrorActionPreference = 'SilentlyContinue'
@@ -43,9 +48,9 @@ switch ($Action) {
       if (Test-HolderAlive $holder) {
         "lock: HELD by $holder (pid alive), age ${age}s"
       } elseif ($age -gt $LockStale) {
-        "lock: STALE (age ${age}s > ${LockStale}s), recorded $holder — pid dead/unverifiable"
+        "lock: STALE (age ${age}s > ${LockStale}s), recorded $holder — pid dead"
       } else {
-        "lock: FRESH-HELD by $holder, age ${age}s (holder pid not verifiable — artifacts decide)"
+        "lock: FRESH-HELD by $holder, age ${age}s (holder pid dead — artifacts decide)"
       }
     }
   }
@@ -54,7 +59,7 @@ switch ($Action) {
       $holder = Get-Holder
       $age = Lock-Age
       if (Test-HolderAlive $holder) { "REFUSED: live lock held by $holder"; exit 1 }
-      if ($age -le $LockStale) { "REFUSED: lock age ${age}s <= ${LockStale}s but pid unverifiable — escalate to human"; exit 1 }
+      if ($age -le $LockStale) { "REFUSED: lock age ${age}s <= ${LockStale}s but pid dead — escalate to human"; exit 1 }
       "taking over stale lock (prior: $holder, ${age}s)"
     }
     # Track H: -f formatting + explicit line array. The old adjacent-variable

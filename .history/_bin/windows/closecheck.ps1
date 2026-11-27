@@ -10,6 +10,8 @@
 param([Parameter(Mandatory=$true)][string]$Slug, [string]$Worktree, [switch]$Anchors, [switch]$Ratify, [switch]$Risk)
 $ErrorActionPreference = 'SilentlyContinue'
 Set-Location (Join-Path $PSScriptRoot '..\..\..')
+# Shared claim-row parser + CLOSE extractor (v6.5, L-C4/L-C5) — dot-sourced before any parsing.
+. (Join-Path $PSScriptRoot 'claim-rows.ps1')
 
 # --- v5 anchor gate (active in the v5 package; see docs/workflow/anchors.md) ---
 if ($Anchors) {
@@ -17,12 +19,8 @@ if ($Anchors) {
   if (-not (Test-Path $d)) { "no task dir $d"; exit 1 }
   $wl = Join-Path $d 'worklog.md'
   if (-not (Test-Path $wl)) { 'ANCHOR-FAIL: no worklog'; exit 1 }
-  # text after the last line mentioning CLOSE
-  $lines = Get-Content $wl
-  $lastClose = -1
-  for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match 'CLOSE') { $lastClose = $i } }
-  if ($lastClose -lt 0) { 'ANCHOR-FAIL: no CLOSE entry found'; exit 1 }
-  $close = ($lines[($lastClose)..($lines.Count-1)] -join "`n")
+  # text after the last line mentioning CLOSE — the shared extractor
+  $close = Get-CloseText $wl
   if (-not $close.Trim()) { 'ANCHOR-FAIL: no CLOSE entry found'; exit 1 }
   $verdict = 'ANCHOR-PASS'
   if ($close -notmatch '(mvn |\[PASS|\[FAIL|BUILD SUCCESS|BUILD FAILURE|[Vv]erdict|WAIVED|waived)') {
@@ -56,11 +54,8 @@ if ($Ratify) {
   if (-not (Test-Path $w)) { "no worktree $w"; exit 1 }
   $wl = Join-Path $d 'worklog.md'
   if (-not (Test-Path $wl)) { 'RATIFY-FAIL: no worklog'; exit 1 }
-  $lines = Get-Content $wl
-  $lastClose = -1
-  for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match 'CLOSE') { $lastClose = $i } }
-  if ($lastClose -lt 0) { 'RATIFY-FAIL: no CLOSE entry found'; exit 1 }
-  $close = ($lines[($lastClose)..($lines.Count-1)] -join "`n")
+  $close = Get-CloseText $wl
+  if (-not $close.Trim()) { 'RATIFY-FAIL: no CLOSE entry found'; exit 1 }
   $tokens = (($close -split "`n") | Where-Object { $_ -notmatch '^chain: ' }) -join "`n"
   $checked = 0; $wrong = 0
   foreach ($m in ([regex]::Matches($tokens, '\b[0-9a-f]{9,40}\b') | ForEach-Object { $_.Value } | Sort-Object -Unique)) {
@@ -85,20 +80,19 @@ if ($Risk) {
   if (-not (Test-Path $d)) { "no task dir $d"; exit 1 }
   $wm = Join-Path $d 'workers.md'
   if (-not (Test-Path $wm)) { 'RISK-FAIL: no workers.md'; exit 1 }
-  $lines = Get-Content $wm
-  $hdr = $lines | Where-Object { $_ -match '^\|\s*#\s*\|' } | Select-Object -First 1
-  if (-not $hdr) { 'risk: no claim rows'; exit 0 }
-  $cells = ($hdr -split '\|') | ForEach-Object { $_.Trim() }
-  $si = [Array]::IndexOf($cells, 'Status'); $ri = [Array]::IndexOf($cells, 'Risk')
-  if ($ri -lt 0) { 'note: no Risk column — rows predate gap 3, treated as unrecorded'; exit 0 }
+  # the shared parser (both ledger shapes); no Risk column in the header
+  # = pre-v6 rows, treated as unrecorded (not low).
+  $rows = Get-ClaimRows $wm
+  if ($rows.Count -eq 0) { 'risk: no claim rows'; exit 0 }
+  $hasRisk = [bool](Get-Content $wm | Where-Object { $_ -match '^\|.*\|\s*Risk\s*\|' })
+  if (-not $hasRisk) { 'note: no Risk column — rows predate gap 3, treated as unrecorded'; exit 0 }
   $fail = 0; $confirmed = $false
   $qa = Join-Path $d 'qa.md'
   if (Test-Path $qa) {
-    $confirmed = ($null -ne ($lines2 = Get-Content $qa | Where-Object { $_ -match '^\|[^|]*\|[^|]*[Rr]isk[^|]*\|[^|]*RELEASED[^|]*\|' }))
+    $confirmed = ($null -ne (Get-Content $qa | Where-Object { $_ -match '^\|[^|]*\|[^|]*[Rr]isk[^|]*\|[^|]*RELEASED[^|]*\|' }))
   }
-  foreach ($row in ($lines | Where-Object { $_ -match '^\|\s*[0-9]+\s*\|' })) {
-    $c = ($row -split '\|') | ForEach-Object { $_.Trim() }
-    $n = $c[1]; $st = $c[$si]; $rk = $c[$ri]
+  foreach ($row in $rows) {
+    $n = $row.Num; $st = $row.Status; $rk = $row.Risk
     if ($rk -notin 'high','critical') { continue }
     if ($st -eq 'DECLARED') { "PENDING: row #$n risk $rk awaits human confirmation (qa.md risk question)" }
     elseif ($st -in 'GRANTED','EXECUTING') {
@@ -109,7 +103,13 @@ if ($Risk) {
   exit $fail
 }
 
+# --- classic close inputs (default mode) ---
+# Q-P6: $d/$wl were never assigned in classic mode (the mode was dead —
+# it always failed with "no task dir " on an empty $d). Assigned here.
+if (-not $Worktree) { "closecheck: classic mode needs -Worktree <name>"; exit 1 }
+$d = ".history\$($Slug.TrimEnd('/\'))"
 $w = ".worktree\$($Worktree.TrimEnd('/\'))"
+$wl = Join-Path $d 'worklog.md'
 if (-not (Test-Path $d)) { "no task dir $d"; exit 1 }
 if (-not (Test-Path $w)) { "no worktree $w"; exit 1 }
 

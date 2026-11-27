@@ -20,7 +20,7 @@ you as plane (project-root cwd) and you could write anywhere under
 ## 1. Grill
 
 Load `.agent/skills/requirements-grill/SKILL.md` and run it with the
-argument as the rough idea. Do not improvise duties beyond that skill;
+argument as the rough idea. Do not improvise duties beyond that body;
 if a situation is not covered, surface it to the human instead of
 inventing policy. You write the intake doc only after the user
 confirms shared understanding — never before.

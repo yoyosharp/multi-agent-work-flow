@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Board dump: TASK_LIST statuses, claim rows, signal freshness, worktrees.
 # Read-only. Usage: status.sh
+# Shared claim-row parser (v6.5, L-C4) — sourced before the cd to root.
+. "$(dirname "$0")/claim-rows.sh" 2>/dev/null || { echo "claim-rows.sh missing under $(dirname "$0") — reinstall the package" >&2; exit 1; }
 set -u
 cd "$(dirname "$0")/../../.." || exit 1
 date '+board %F %T'
@@ -17,19 +19,10 @@ echo "== claims (workers.md rows: # worker phase status)"
 for d in .history/*/; do
   wm="$d/workers.md"
   [ -f "$wm" ] || continue
-  # header-indexed: column roles come from the table header, not fixed
-  # positions (v5.1 added Method/Commitment — positional $10 would misread)
-  awk -F'|' '
-    function trim(x) { gsub(/^ +| +$/,"",x); return x }
-    /^\|[ ]*#[ ]*\|/ && (hdr != 1) {
-      for (i=2; i<=NF; i++) { h=trim($i); sub(/#.*/,"",h); if (h=="Status") si=i; if (h=="Phase") pi=i; if (h=="Worker") wi=i }
-      hdr=1; next
-    }
-    /^\|[ ]*[0-9]+[ ]*\|/ {
-      if (!si) { si=10; pi=6; wi=3 }
-      print "  ["trim($2)"] "trim($wi)" | "trim($pi)" | "trim($si)
-    }' "$wm" |
-    sed "s|^|${d#.history/}: |" | cut -c1-140
+  slug="${d#.history/}"; slug="${slug%/}"
+  short=$(printf '%s' "$slug" | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}-//')
+  claim_rows "$wm" | awk -F'\t' -v s="$short" '{w=($2!=""?$2:s); print "  ["$1"] "w" | "$3" | "$4}' |
+    sed "s|^|$slug: |" | cut -c1-140
 done
 
 # Declared worker states (v5.2): last state line per task worklog; blocked
@@ -37,13 +30,13 @@ done
 echo "== declared states (waiting/blocked first)"
 for d in .history/*/; do
   [ -f "${d}worklog.md" ] || continue
-  grep -E '^state: (WAITING|BLOCKED)' "${d}worklog.md" | tail -1 |
-    sed "s|^state: |${d#.history/}: |"
+  grep -E '^(- )?state: (WAITING|BLOCKED)' "${d}worklog.md" | tail -1 |
+    sed -E "s|^(- )?state: |${d#.history/}: |"
 done
 for d in .history/*/; do
   [ -f "${d}worklog.md" ] || continue
-  grep -E '^state: ACTIVE' "${d}worklog.md" | tail -1 |
-    sed "s|^state: |${d#.history/}: |"
+  grep -E '^(- )?state: ACTIVE' "${d}worklog.md" | tail -1 |
+    sed -E "s|^(- )?state: |${d#.history/}: |"
 done
 
 echo "== signal freshness (newest artifact per task, seconds ago)"

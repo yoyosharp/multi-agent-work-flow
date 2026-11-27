@@ -57,6 +57,19 @@ foreach ($td in Get-ChildItem .history -Directory) {
     }
   }
 
+  $pln = Join-Path $td.FullName 'plan.md'
+  if (Test-Path $pln) {
+    foreach ($line in Get-Content $pln) {
+      if ($line -match '^\|\s*D\d+') {
+        $cols = $line -split '\|' | ForEach-Object { $_.Trim() }
+        $st = if ($cols[-1] -eq '') { $cols[-2] } else { $cols[-1] }
+        if ($st -eq 'OPEN' -or $st -match '^ADJUDICATED') {
+          $out += "    [held—surface at next reply] plan $($cols[1]): $($cols[2])"
+        }
+      }
+    }
+  }
+
   $ibx = Join-Path $td.FullName 'inbox.md'
   if (Test-Path $ibx) {
     $rows = (Get-Content $ibx | Where-Object { $_ -match '^\|' } | Measure-Object).Count

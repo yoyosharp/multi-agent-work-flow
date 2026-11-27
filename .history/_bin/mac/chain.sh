@@ -6,7 +6,8 @@
 # The worker appends the chain line at CLOSE (see worker-close.md);
 # closecheck.sh anchors verifies the whole chain, and a break or a missing
 # chain line on a chained worklog is an ANCHOR-FAIL. Worklogs with no chain
-# lines at all are pre-v6 and grandfathered (verify reports CHAIN-SKIP).
+# lines at all are pre-v6 and grandfathered (verify reports CHAIN-SKIP)
+# until the first v6 CLOSE on that worklog starts a chain.
 # The chain covers CLOSE entries only, not every worklog line — a rewritten
 # CLOSE entry (or a forged one) breaks its hash; a rewritten non-CLOSE line
 # is still the plane's spot-check territory, not the chain's. The chain line
@@ -17,6 +18,8 @@
 #        chain.sh verify <task-slug>   (prints CHAIN-OK / CHAIN-FAIL / CHAIN-SKIP)
 # Genesis prev hash: v6-chain-genesis. Exit 0 = chained/verified/skipped;
 # exit 1 = no CLOSE entry, missing worklog, or a broken chain.
+# Shared CLOSE extractor (v6.5, L-C5) — sourced before the cd to root.
+. "$(dirname "$0")/claim-rows.sh" 2>/dev/null || { echo "claim-rows.sh missing under $(dirname "$0") — reinstall the package" >&2; exit 1; }
 set -u
 cd "$(dirname "$0")/../../.." || exit 1
 
@@ -34,7 +37,7 @@ sha_text() { # sha_text <prev> <entry-text> — same normalization on both paths
   fi
 }
 last_close() { # last_close — the last CLOSE block (CLOSE line to EOF, no leading blank)
-  awk '/CLOSE/{found=1; buf=""} found{buf=(buf=="" ? $0 : buf"\n"$0)} END{printf "%s", buf}' "$wl"
+  close_text "$wl"
 }
 strip_chain() { printf '%s' "$1" | grep -v '^chain: '; }
 
@@ -51,7 +54,7 @@ case "$mode" in
     echo "chain: $h (entry chained, prev ${prev:0:12}…)"
     ;;
   verify)
-    grep -q '^chain: ' "$wl" || { echo "CHAIN-SKIP: no chain lines — pre-v6 worklog, grandfathered"; exit 0; }
+    grep -q '^chain: ' "$wl" || { echo "CHAIN-SKIP: no chain lines — pre-v6 worklog, grandfathered until the first v6 CLOSE starts a chain"; exit 0; }
     prev="$GENESIS"; n=0; block=""; in_block=0; fail=0
     verify_block() { # verify_block — check the accumulated block, update prev
       [ "$in_block" = 1 ] || return 0

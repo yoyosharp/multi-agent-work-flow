@@ -12,6 +12,8 @@ AGENT_DIR="$([ -d .agent ] && printf .agent || printf .claude)"
 set -u
 cd "$(dirname "$0")/../../.." || exit 1
 bin="$(dirname "$0")"
+# Shared claim-row parser (v6.5, L-C4) — the parser tests below call it directly.
+. "$bin/claim-rows.sh" 2>/dev/null || { echo "claim-rows.sh missing under $bin — reinstall the package" >&2; exit 1; }
 fail=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  SELFTEST-FAIL: $1"; fail=1; }
@@ -75,15 +77,13 @@ printf '%s\n' \
   '| # | Worker | Phase | Extra | Method | Commitment | Status |' \
   '|---|---|---|---|---|---|---|' \
   '| 1 | w1 | impl | e1 | md | c1 | GRANTED |' > "$work/wm-b.md"
-parser_status() { awk -F'|' '
-    function trim(x) { gsub(/^ +| +$/,"",x); return x }
-    /^\|[ ]*#[ ]*\|/ && (hdr != 1) {
-      for (i=2; i<=NF; i++) { h=trim($i); sub(/#.*/,"",h); if (h=="Status") si=i }
-      hdr=1; next
-    }
-    /^\|[ ]*[0-9]+[ ]*\|/ { print trim($si) }' "$1"; }
-for f in a b; do
-  r=$(parser_status "$work/wm-$f.md")
+# old shape (pre-v5.1, no # column — F2): rows start | <worker> |
+printf '%s\n' \
+  '| Worker | Host:Pid | Launched-by | Phase | Write domain | Resource tokens | Claimed-at | Status | Granted-at | Notes |' \
+  '|---|---|---|---|---|---|---|---|---|---|' \
+  '| worker-cc-1 | host:111 | plane | impl | src/** | - | 2026-11-26 10:00 | EXECUTING | 2026-11-26 10:00 | old shape |' > "$work/wm-c.md"
+for f in a b c; do
+  r=$(claim_rows "$work/wm-$f.md" | awk -F'\t' '{print $4}')
   case "$r" in
     EXECUTING|GRANTED) ok "parser reads layout-$f Status ($r)" ;;
     *) bad "parser misread layout-$f (got: '$r')" ;;
@@ -251,8 +251,8 @@ sleep 1
 WORKFLOW_ROOT="$hr" DECLARE_ROLE_PID="$fakepid" bash "$bin/declare-role.sh" worker demo >/dev/null 2>&1
 [ -f "$hr/.history/_sessions/$fakepid" ] \
   && grep -qx 'role=worker' "$hr/.history/_sessions/$fakepid" \
-  && grep -qx 'slug=demo' "$hr/.history/_sessions/$fakepid" \
-  && ok "declare-role.sh writes role=worker slug=demo for the injected pid" \
+  && grep -qx 'slug=2026-11-10-demo' "$hr/.history/_sessions/$fakepid" \
+  && ok "declare-role.sh writes role=worker slug=2026-11-10-demo for the injected pid (short slug resolved)" \
   || bad "declare-role.sh did not write the registry entry (role/slug)"
 hook_reg() { # hook_reg <pid> <json> — hook with HOOK_AGENT_PID, no role env vars (env -u clears any ambient WORKFLOW_*/WF_* so the registry is the only source)
   env -u WORKFLOW_ROLE -u WORKFLOW_SLUG -u WF_ROLE -u WF_SLUG WORKFLOW_ROOT="$hr" HOOK_AGENT_PID="$1" bash "$AGENT_DIR/hooks/domain-guard.sh" <<< "$2" 2>/dev/null; echo $?
@@ -352,11 +352,29 @@ cp -r "$bin" "$broot/.history/_bin/linux"; cp -r .history/_templates/* "$broot/.
 printf '### demo\n' > "$broot/.history/TASK_LIST.md"; touch "$broot/.history/SHUTDOWN.md" "$broot/.history/._watcher_stop"
 printf '%s\n' '| # | Worker | Host:Pid | Launched-by | Phase | Method | Commitment | Write domain | Resource tokens | Claimed-at | Status | Granted-at | Notes |' '|---|---|---|---|---|---|---|---|---|---|---|---|---|' '| 1 | w1 | h:1 | human | impl | - | - | wt | - | t | EXECUTING | t | - |' > "$broot/.history/2026-11-11-demo/workers.md"
 printf 'state: BLOCKED qa\n' > "$broot/.history/2026-11-11-demo/worklog.md"
-bout=$("$fakebin/claude" env WORKFLOW_ROOT="$broot" PLANE_WATCH_DISABLE=1 bash "$broot/.history/_bin/linux/boot.sh" "$broot" 2>&1)
+bout=$("$fakebin/claude" env WORKFLOW_ROOT="$broot" RUNNER_DISABLE=1 bash "$broot/.history/_bin/linux/boot.sh" "$broot" 2>&1)
 printf '%s' "$bout" | grep -q "lock taken" && [ ! -e "$broot/.history/SHUTDOWN.md" ] && [ ! -e "$broot/.history/._watcher_stop" ] \
   && printf '%s' "$bout" | grep -q "EXECUTING" && printf '%s' "$bout" | grep -q "NEEDS-YOU" \
   && ok "boot.sh declares plane, takes the lock, clears spent markers and sweeps live claims in one call" \
   || bad "boot.sh fixture failed: $(printf '%s' "$bout" | tail -2)"
+# boot registers the plane pane from $TMUX (v6.5: the watcher used to do
+# this at start; the runner has no $TMUX, so boot owns it).
+pbroot="$PWD/$work/boot-pane-root"; mkdir -p "$pbroot/.history/2026-11-11-demo" "$pbroot/.history/_bin" "$pbroot/.history/_templates" "$pbroot/.history/_shared"
+cp -r "$bin" "$pbroot/.history/_bin/linux"; cp -r .history/_templates/* "$pbroot/.history/_templates/" 2>/dev/null
+printf '### demo\n' > "$pbroot/.history/TASK_LIST.md"
+printf '%s\n' '| # | Worker | Host:Pid | Launched-by | Phase | Method | Commitment | Write domain | Resource tokens | Claimed-at | Status | Granted-at | Notes |' '|---|---|---|---|---|---|---|---|---|---|---|---|---|' '| 1 | w1 | h:1 | human | impl | - | - | wt | - | t | EXECUTING | t | - |' > "$pbroot/.history/2026-11-11-demo/workers.md"
+printf 'state: BLOCKED qa\n' > "$pbroot/.history/2026-11-11-demo/worklog.md"
+mkdir -p "$work/fakebin3"
+cat > "$work/fakebin3/tmux" <<'FAKETMUX'
+#!/bin/sh
+printf '%s\n' 'plane:0.%0'
+FAKETMUX
+chmod +x "$work/fakebin3/tmux"
+fakebin3_abs="$PWD/$work/fakebin3"
+"$fakebin/claude" env WORKFLOW_ROOT="$pbroot" RUNNER_DISABLE=1 TMUX=/tmp/tmux-fake/default,1,0 PATH="$fakebin3_abs:$PATH" bash "$pbroot/.history/_bin/linux/boot.sh" "$pbroot" >/dev/null 2>&1
+[ "$(cat "$pbroot/.history/._plane_pane" 2>/dev/null)" = "plane:0.%0" ] \
+  && ok "boot.sh registers the plane pane from \$TMUX" \
+  || bad "boot.sh did not register the plane pane"
 # fixture: shutdown is fire-and-forget — signal + teardown, no waiting
 printf '# inbox\n' > "$broot/.history/2026-11-11-demo/inbox.md"
 sout=$("$fakebin/claude" env WORKFLOW_ROOT="$broot" bash -c 'bash "$1/declare-role.sh" plane >/dev/null; bash "$1/shutdown.sh" "$2" selftest' _ "$broot/.history/_bin/linux" "$broot" 2>&1)
@@ -411,7 +429,7 @@ grep -qxF '.history/*' "$iprobe/.gitignore" && grep -qxF '!.history/_shared/' "$
   || bad "init is missing the intake template"
 [ -x "$iprobe/.history/_bin/linux/tick.sh" ] && [ -x "$iprobe/.history/_bin/linux/merge-index.sh" ] && [ -x "$iprobe/.claude/hooks/domain-guard.sh" ] \
   && ok "init makes platform scripts + hook executable (fresh extracts ship 644)" \
-  || bad "init left scripts non-executable — status.sh/plane-poll.sh call siblings directly"
+  || bad "init left scripts non-executable — status.sh/runner.sh call siblings directly"
 grep -q 'workflow-pointer: v6' "$iprobe/CLAUDE.md" 2>/dev/null \
   && ok "init installs the spec-pointer block" \
   || bad "init installed no pointer block"
@@ -742,9 +760,9 @@ bash "$ocprobe/.history/_bin/linux/init.sh" "$ocprobe" 2>&1 | grep -q 'has no MT
   || bad "init did not flag the missing server keys"
 srv_cleanup
 
-echo "== plane-watch (v6 track A): diff-gated wake, tmux pre-checks"
+echo "== runner (v6.5): one cycle, diff-gated wake, tmux pre-checks, overdue check"
 # fixture: a minimal project with a lock held and one task worklog.
-# The watcher runs in --test-mode (stdin events) — no inotifywait needed.
+# The runner runs one cycle and exits — no inotifywait, no --test-mode.
 wroot="$work/watch-root"
 mkdir -p "$wroot/.history/2026-11-11-demo" "$wroot/.worktree/demo" "$wroot/.history/_bin"
 cp -r .history/_bin/linux "$wroot/.history/_bin/linux"
@@ -757,37 +775,48 @@ printf '%s\n' \
   > "$wroot/.history/2026-11-11-demo/workers.md"
 bash "$wroot/.history/_bin/linux/lock.sh" take >/dev/null 2>&1
 bash "$wroot/.history/_bin/linux/tick.sh" --plane --diff >/dev/null 2>&1 # baseline snapshot
-watch_run() { # watch_run — feed one event line, run the watcher in test mode
-  printf '%s\n' "$1" | (cd "$wroot" && PLANE_WATCH_DEBOUNCE=1 bash .history/_bin/linux/plane-watch.sh . --test-mode >/dev/null 2>&1)
+runner_run() { # runner_run — one cycle in the fixture
+  (cd "$wroot" && bash .history/_bin/linux/runner.sh >/dev/null 2>&1)
 }
-watch_run '.history/2026-11-11-demo/worklog.md'
-grep -q 'empty diff — no wake' "$wroot/.history/_watcher.log" \
-  && ok "watcher stays silent on an empty diff" \
-  || bad "watcher woke (or crashed) on an empty diff"
+runner_run
+grep -q 'empty diff — no wake' "$wroot/.history/_runner.log" \
+  && ok "runner stays silent on an empty diff" \
+  || bad "runner woke (or crashed) on an empty diff"
 printf '2026-11-11 10:05 — progress note\n' >> "$wroot/.history/2026-11-11-demo/worklog.md"
-watch_run '.history/2026-11-11-demo/worklog.md'
-grep -q 'non-empty diff' "$wroot/.history/_watcher.log" \
-  && ok "watcher notices a non-empty diff" \
-  || bad "watcher missed a non-empty diff"
-grep -q 'no plane pane registered' "$wroot/.history/_watcher.log" \
-  && ok "watcher does not guess a pane — backstop only without registration" \
-  || bad "watcher woke without a registered pane"
-# track G: watcher regenerates the static board after a non-empty diff.
+runner_run
+grep -q 'non-empty diff' "$wroot/.history/_runner.log" \
+  && ok "runner notices a non-empty diff" \
+  || bad "runner missed a non-empty diff"
+grep -q 'no plane pane registered' "$wroot/.history/_runner.log" \
+  && ok "runner does not guess a pane — backstop only without registration" \
+  || bad "runner woke without a registered pane"
+# track G: runner regenerates the static board after a non-empty diff.
 printf 'SENTINEL-OLD-BOARD\n' > "$wroot/.history/board.html"
 printf '2026-11-11 10:12 — progress note\n' >> "$wroot/.history/2026-11-11-demo/worklog.md"
-watch_run '.history/2026-11-11-demo/worklog.md'
-grep -q 'board regenerated' "$wroot/.history/_watcher.log" \
+runner_run
+grep -q 'board regenerated' "$wroot/.history/_runner.log" \
   && ! grep -q 'SENTINEL-OLD-BOARD' "$wroot/.history/board.html" \
-  && ok "watcher regenerates board.html after a non-empty diff" \
-  || bad "watcher did not regenerate board.html"
-# ...and a board.html-only event must not start a new cycle (board.html is
-# watch-excluded and outside tick's diff — a regen cannot self-trigger).
+  && ok "runner regenerates board.html after a non-empty diff" \
+  || bad "runner did not regenerate board.html"
+# ...and a board.html-only change must not start a new cycle (board.html is
+# outside tick's diff — a regen cannot self-trigger).
+printf '<!-- board-only touch -->\n' >> "$wroot/.history/board.html"
 cp "$wroot/.history/board.html" "$work/board-after-regen.html"
-watch_run '.history/board.html'
-grep -q 'empty diff — no wake' "$wroot/.history/_watcher.log" \
+runner_run
+tail -5 "$wroot/.history/_runner.log" | grep -q 'empty diff — no wake' \
   && cmp -s "$wroot/.history/board.html" "$work/board-after-regen.html" \
-  && ok "board.html-only event: empty diff, no regen, no wake loop" \
-  || bad "board.html write re-triggered the watcher"
+  && ok "board.html-only change: empty diff, no regen, no wake loop" \
+  || bad "board.html write re-triggered the runner"
+# overdue check (v6.5 §8.3): a WAITING row older than STALE_AFTER wakes the
+# plane with the oldest item first — this is what surfaces a dead
+# plan-review sub-agent (no verdict, row ages).
+past_epoch=$(( $(date +%s) - 120 ))
+past_hm="$(date -u -d "@$past_epoch" '+%H:%M' 2>/dev/null || date -u -r "$past_epoch" '+%H:%M')"
+printf -- '- state: WAITING kind:pre-test-review clearer:plane since:%s\n' "$past_hm" >> "$wroot/.history/2026-11-11-demo/worklog.md"
+STALE_AFTER=0 runner_run
+tail -5 "$wroot/.history/_runner.log" | grep -q 'overdue check: 1 overdue — oldest: 2026-11-11-demo WAITING kind:pre-test-review' \
+  && ok "runner overdue check flags a WAITING row older than STALE_AFTER" \
+  || bad "runner overdue check missed the stale WAITING row"
 if command -v tmux >/dev/null 2>&1; then
   # pane running a shell command (not the agent): wake must be refused.
   tmux kill-session -t muse-watch-test 2>/dev/null || true
@@ -795,10 +824,10 @@ if command -v tmux >/dev/null 2>&1; then
   shell_pane="$(tmux display-message -p -t muse-watch-test '#{session_name}:#{window_index}.#{pane_id}' 2>/dev/null)"
   printf '%s\n' "$shell_pane" > "$wroot/.history/._plane_pane"
   printf '2026-11-11 10:10 — progress note\n' >> "$wroot/.history/2026-11-11-demo/worklog.md"
-  watch_run '.history/2026-11-11-demo/worklog.md'
-  grep -q "refusing wake: plane pane $shell_pane runs 'sleep'" "$wroot/.history/_watcher.log" \
-    && ok "watcher refuses to type into a non-agent pane" \
-    || bad "watcher did not refuse the shell pane"
+  runner_run
+  grep -q "refusing wake: plane pane $shell_pane runs 'sleep'" "$wroot/.history/_runner.log" \
+    && ok "runner refuses to type into a non-agent pane" \
+    || bad "runner did not refuse the shell pane"
   tmux capture-pane -p -t "$shell_pane" 2>/dev/null | grep -q 'plane-wake' \
     && bad "wake line was typed into the shell pane" \
     || ok "nothing was typed into the shell pane"
@@ -809,10 +838,10 @@ if command -v tmux >/dev/null 2>&1; then
   agent_pane="$(tmux display-message -p -t muse-watch-test2 '#{session_name}:#{window_index}.#{pane_id}' 2>/dev/null)"
   printf '%s\n' "$agent_pane" > "$wroot/.history/._plane_pane"
   printf '2026-11-11 10:15 — progress note\n' >> "$wroot/.history/2026-11-11-demo/worklog.md"
-  watch_run '.history/2026-11-11-demo/worklog.md'
-  grep -q "woke plane pane $agent_pane" "$wroot/.history/_watcher.log" \
-    && ok "watcher wakes the agent pane" \
-    || bad "watcher did not wake the agent pane"
+  runner_run
+  grep -q "woke plane pane $agent_pane" "$wroot/.history/_runner.log" \
+    && ok "runner wakes the agent pane" \
+    || bad "runner did not wake the agent pane"
   sleep 1
   tmux capture-pane -p -t "$agent_pane" 2>/dev/null | grep -q 'plane-wake: .history changed' \
     && ok "wake line arrived in the agent pane" \
@@ -820,28 +849,11 @@ if command -v tmux >/dev/null 2>&1; then
   tmux kill-session -t muse-watch-test 2>/dev/null || true
   tmux kill-session -t muse-watch-test2 2>/dev/null || true
 else
-  echo "  skip: tmux tests (tmux not installed — watcher wake unavailable on this machine)"
+  echo "  skip: tmux tests (tmux not installed — runner wake unavailable on this machine)"
 fi
 
 
-# 11-18 fix: the watcher registers its own pane at start (from $TMUX), so the
-# plane is wakeable from boot instead of waiting up to 30 min for the backstop.
-proot="$work/pane-root"
-mkdir -p "$proot/.history/_bin"
-cp -r .history/_bin/linux "$proot/.history/_bin/linux"
-mkdir -p "$work/fakebin3"
-cat > "$work/fakebin3/tmux" <<'FAKETMUX'
-#!/bin/sh
-printf '%s\n' 'plane:0.%0'
-FAKETMUX
-chmod +x "$work/fakebin3/tmux"
-fakebin3_abs="$PWD/$work/fakebin3"
-printf '' | (cd "$proot" && TMUX=/tmp/tmux-fake/default,1,0 PATH="$fakebin3_abs:$PATH" PLANE_WATCH_DEBOUNCE=1 bash .history/_bin/linux/plane-watch.sh . --test-mode >/dev/null 2>&1)
-[ "$(cat "$proot/.history/._plane_pane" 2>/dev/null)" = "plane:0.%0" ] \
-  && ok "watcher registers its own pane at start (from \$TMUX)" \
-  || bad "watcher did not register its pane at start"
-
-echo "== worker wake, Phase 2 (v6 track A): inbox change + waiting worker only"
+echo "== worker wake, Phase 2 (v6.5 runner): inbox change + waiting worker only"
 wwroot="$work/wwatch-root"
 mkdir -p "$wwroot/.history/_bin" "$wwroot/.history/._worker_panes" "$wwroot/.worktree/alpha" "$wwroot/.worktree/beta"
 cp -r .history/_bin/linux "$wwroot/.history/_bin/linux"
@@ -861,8 +873,8 @@ mkww alpha WAITING
 mkww beta ACTIVE
 bash "$wwroot/.history/_bin/linux/lock.sh" take >/dev/null 2>&1
 bash "$wwroot/.history/_bin/linux/tick.sh" --plane --diff >/dev/null 2>&1 # baseline snapshot
-wwatch_run() { # wwatch_run — feed one event line, run the watcher in test mode
-  printf '%s\n' "$1" | (cd "$wwroot" && PLANE_WATCH_DEBOUNCE=1 bash .history/_bin/linux/plane-watch.sh . --test-mode >/dev/null 2>&1)
+wwatch_run() { # wwatch_run — one runner cycle (inbox changes are found by the cycle's snapshot scan)
+  (cd "$wwroot" && bash .history/_bin/linux/runner.sh >/dev/null 2>&1)
 }
 if command -v tmux >/dev/null 2>&1; then
   tmux kill-session -t muse-ww-a 2>/dev/null || true
@@ -873,13 +885,13 @@ if command -v tmux >/dev/null 2>&1; then
   pane_b="$(tmux display-message -p -t muse-ww-b '#{session_name}:#{window_index}.#{pane_id}' 2>/dev/null)"
   printf '%s\n' "$pane_a" > "$wwroot/.history/._worker_panes/alpha"
   printf '%s\n' "$pane_b" > "$wwroot/.history/._worker_panes/beta"
-  wwatch_run '.history/2026-11-11-alpha/inbox.md'
-  grep -q 'woke worker' "$wwroot/.history/_watcher.log" 2>/dev/null \
+  wwatch_run
+  grep -q 'woke worker' "$wwroot/.history/_runner.log" 2>/dev/null \
     && bad "worker woken on first run (snapshots must baseline silently)" \
     || ok "first run baselines inbox snapshots without waking"
   printf 'plane: please answer Q1\n' >> "$wwroot/.history/2026-11-11-alpha/inbox.md"
-  wwatch_run '.history/2026-11-11-alpha/inbox.md'
-  grep -q 'woke worker 2026-11-11-alpha pane' "$wwroot/.history/_watcher.log" \
+  wwatch_run
+  grep -q 'woke worker 2026-11-11-alpha pane' "$wwroot/.history/_runner.log" \
     && ok "inbox change wakes the waiting worker" \
     || bad "inbox change did not wake the waiting worker"
   sleep 1
@@ -890,26 +902,26 @@ if command -v tmux >/dev/null 2>&1; then
     && bad "worker beta's pane was woken by alpha's inbox change" \
     || ok "per-slug filter: beta's pane untouched by alpha's inbox change"
   printf 'plane: please answer Q2\n' >> "$wwroot/.history/2026-11-11-beta/inbox.md"
-  wwatch_run '.history/2026-11-11-beta/inbox.md'
-  grep -q 'inbox changed for 2026-11-11-beta but worker is not waiting' "$wwroot/.history/_watcher.log" \
+  wwatch_run
+  grep -q 'inbox changed for 2026-11-11-beta but worker is not waiting' "$wwroot/.history/_runner.log" \
     && ok "ACTIVE worker is not woken by its inbox change" \
     || bad "ACTIVE worker was woken (or the reason was not logged)"
   tmux capture-pane -p -t "$pane_b" 2>/dev/null | grep -q 'worker-wake' \
     && bad "wake line arrived in the ACTIVE worker's pane" \
     || ok "nothing typed into the ACTIVE worker's pane"
   mkww gamma WAITING
-  wwatch_run '.history/2026-11-11-gamma/inbox.md' # baseline gamma's inbox snapshot
+  wwatch_run # baseline gamma's inbox snapshot
   printf 'plane: please answer Q3\n' >> "$wwroot/.history/2026-11-11-gamma/inbox.md"
-  wwatch_run '.history/2026-11-11-gamma/inbox.md'
-  grep -q 'inbox changed for waiting worker 2026-11-11-gamma but no pane registered' "$wwroot/.history/_watcher.log" \
+  wwatch_run
+  grep -q 'inbox changed for waiting worker 2026-11-11-gamma but no pane registered' "$wwroot/.history/_runner.log" \
     && ok "unregistered worker stays on polling, no crash" \
     || bad "unregistered worker was woken or the watcher crashed"
   mkww delta WAITING
   printf 'nosuch:0.%%99\n' > "$wwroot/.history/._worker_panes/delta"
-  wwatch_run '.history/2026-11-11-delta/inbox.md' # baseline delta's inbox snapshot
+  wwatch_run # baseline delta's inbox snapshot
   printf 'plane: please answer Q4\n' >> "$wwroot/.history/2026-11-11-delta/inbox.md"
-  wwatch_run '.history/2026-11-11-delta/inbox.md'
-  grep -q 'refusing wake: worker 2026-11-11-delta pane nosuch:0.%99 does not exist' "$wwroot/.history/_watcher.log" \
+  wwatch_run
+  grep -q 'refusing wake: worker 2026-11-11-delta pane nosuch:0.%99 does not exist' "$wwroot/.history/_runner.log" \
     && ok "dead worker pane is refused, not typed into" \
     || bad "dead worker pane was not refused"
   tmux kill-session -t muse-ww-a 2>/dev/null || true
@@ -918,46 +930,63 @@ else
   echo "  skip: worker-wake tmux tests (tmux not installed)"
 fi
 
-echo "== plane-poll supervises a dead watcher (v6 track A)"
-# fake inotifywait (sleeps) so the real watcher can run here.
-mkdir -p "$work/fakebin2"
-printf '#!/bin/sh\nsleep 300\n' > "$work/fakebin2/inotifywait"; chmod +x "$work/fakebin2/inotifywait"
-sroot="$work/supervise-root"
-mkdir -p "$sroot/.history" "$sroot/.history/_bin"
-cp -r .history/_bin/linux "$sroot/.history/_bin/linux"
-cp .history/_templates/TASK_LIST.template.md "$sroot/.history/TASK_LIST.md"
-chmod +x "$sroot/.history/_bin/linux/"*.sh # installed state (fresh extracts ship 644)
-(cd "$sroot" && bash .history/_bin/linux/lock.sh take >/dev/null 2>&1)
-fakebin_abs="$PWD/$work/fakebin2" # absolute: plane-poll cd's to the fixture root
-(cd "$sroot" && PATH="$fakebin_abs:$PATH" bash .history/_bin/linux/plane-poll.sh >/dev/null 2>&1)
-for _i in 1 2 3 4 5; do [ -f "$sroot/.history/._watcher_state" ] && break; sleep 1; done # watcher starts async
-wpid1="$(sed -n 's/^pid=//p' "$sroot/.history/._watcher_state" 2>/dev/null)"
-[ -n "$wpid1" ] && kill -0 "$wpid1" 2>/dev/null \
-  && ok "backstop starts the watcher (pid $wpid1 alive)" \
-  || bad "backstop did not start the watcher"
-kill "$wpid1" 2>/dev/null; sleep 1
-(cd "$sroot" && PATH="$fakebin_abs:$PATH" bash .history/_bin/linux/plane-poll.sh >/dev/null 2>&1)
-for _i in 1 2 3 4 5; do
-  wpid2="$(sed -n 's/^pid=//p' "$sroot/.history/._watcher_state" 2>/dev/null)"
-  [ -n "$wpid2" ] && [ "$wpid2" != "$wpid1" ] && kill -0 "$wpid2" 2>/dev/null && break
-  sleep 1
-done
-[ -n "$wpid2" ] && [ "$wpid2" != "$wpid1" ] && kill -0 "$wpid2" 2>/dev/null \
-  && ok "backstop restarts a dead watcher (new pid $wpid2)" \
-  || bad "backstop did not restart the dead watcher"
-kill "$wpid2" 2>/dev/null || true
-# 11-18 fix: no watcher (or its event-source subshell) may outlive the
-# fixture — the leak was orphaned subshells on deleted fixture cwds.
-sleep 1 # let the watcher EXIT trap reap the event-source tree
+echo "== runner: one cycle and exits, install/uninstall (v6.5)"
+# no long-running process: the runner runs one cycle and exits; the
+# scheduler (cron / Task Scheduler, every 3 min) is the loop.
+rroot="$work/runner-root"
+mkdir -p "$rroot/.history/_bin"
+cp -r .history/_bin/linux "$rroot/.history/_bin/linux"
+cp .history/_templates/TASK_LIST.template.md "$rroot/.history/TASK_LIST.md"
+chmod +x "$rroot/.history/_bin/linux/"*.sh # installed state (fresh extracts ship 644)
+(cd "$rroot" && bash .history/_bin/linux/lock.sh take >/dev/null 2>&1)
+(cd "$rroot" && bash .history/_bin/linux/runner.sh >/dev/null 2>&1)
+[ $? -eq 0 ] \
+  && ok "runner runs one cycle and exits 0" \
+  || bad "runner did not exit cleanly"
+[ -d "$rroot/.history/._runner_state" ] \
+  && ok "runner wrote its state dir" \
+  || bad "runner wrote no state dir"
+# 11-18 fix: no runner (or its subshell) may outlive the fixture — the leak
+# was orphaned subshells on deleted fixture cwds.
+sleep 0.5 # let the cycle's processes finish
 leak=0
-sroot_abs="$(pwd -P)/$work/supervise-root" # readlink returns absolute cwds; $sroot is relative
-for _p in $(pgrep -f 'plane-watch\.sh' 2>/dev/null); do
+rroot_abs="$(pwd -P)/$work/runner-root" # readlink returns absolute cwds; $rroot is relative
+for _p in $(pgrep -f 'runner\.sh' 2>/dev/null); do
   _c=$(readlink "/proc/$_p/cwd" 2>/dev/null || true)
-  case "$_c" in "$sroot_abs"*) leak=1 ;; esac
+  case "$_c" in "$rroot_abs"*) leak=1 ;; esac
 done
 [ "$leak" = 0 ] \
-  && ok "no watcher processes leak from the supervise fixture" \
-  || bad "watcher processes leaked (cwd under $sroot)"
+  && ok "no runner processes leak from the fixture" \
+  || bad "runner processes leaked (cwd under $rroot)"
+# install/uninstall: marker-tagged crontab entry, idempotent (fake crontab).
+mkdir -p "$work/fakebin4"
+cat > "$work/fakebin4/crontab" <<'FAKECRON'
+#!/bin/sh
+# fake crontab: stores the table in $FAKE_CRONTAB_FILE
+f="${FAKE_CRONTAB_FILE:-/tmp/fake-crontab}"
+case "$1" in
+  -l) cat "$f" 2>/dev/null || true ;;
+  -) cat > "$f" ;;
+  *) echo "fake crontab: unsupported args $*" >&2; exit 1 ;;
+esac
+FAKECRON
+chmod +x "$work/fakebin4/crontab"
+fakebin4_abs="$PWD/$work/fakebin4"
+export FAKE_CRONTAB_FILE="$PWD/$work/fake-crontab"
+rm -f "$FAKE_CRONTAB_FILE"
+(cd "$rroot" && PATH="$fakebin4_abs:$PATH" bash .history/_bin/linux/runner.sh install >/dev/null 2>&1)
+grep -q "workflow-runner $rroot_abs" "$FAKE_CRONTAB_FILE" \
+  && ok "runner install registers the marker-tagged cron job" \
+  || bad "runner install did not register the cron job"
+(cd "$rroot" && PATH="$fakebin4_abs:$PATH" bash .history/_bin/linux/runner.sh install >/dev/null 2>&1)
+[ "$(grep -c 'workflow-runner' "$FAKE_CRONTAB_FILE")" -eq 1 ] \
+  && ok "runner install is idempotent" \
+  || bad "runner install duplicated the cron entry"
+(cd "$rroot" && PATH="$fakebin4_abs:$PATH" bash .history/_bin/linux/runner.sh uninstall >/dev/null 2>&1)
+! grep -q 'workflow-runner' "$FAKE_CRONTAB_FILE" \
+  && ok "runner uninstall removes the cron job" \
+  || bad "runner uninstall left the cron entry"
+unset FAKE_CRONTAB_FILE
 
 echo "== phase-done Stop hook (v6 track A): signals only at phase end"
 sroot2="$work/stop-root"
@@ -1342,6 +1371,9 @@ grep -q "Agent sessions are launched by the human" docs/workflow/control-plane-p
   && grep -q "the plane spawns the reviewer itself — a plane-owned sub-agent, not a terminal session" docs/workflow/control-plane-pm.md \
   && ok "spawn model corrected in pm.md: human launches, plane spawns a terminal session only on explicit order, reviewer sub-agent still auto-spawned" \
   || bad "spawn model lost from pm.md (v6.3 correction)"
+grep -q "Workers never dispatch plan-review" docs/workflow/control-plane-pm.md \
+  && ok "pm.md forbids worker plan-review dispatch (v6.4.3)" \
+  || bad "pm.md lost the worker plan-review dispatch forbid"
 ! grep -q "launches nothing" docs/workflow/control-plane-pm.md docs/workflow/control-plane-instructions.md docs/workflow/verify-duties.md \
   && ok "no stale 'launches nothing' wording in plane docs" \
   || bad "stale 'launches nothing' wording present in plane docs"
@@ -1357,7 +1389,115 @@ grep -q "never stops to ask" docs/workflow/control-plane-pm.md \
   && ok "no stale §6 blocking-wait wording in pm.md" \
   || bad "stale §6 blocking-wait wording present in pm.md"
 
-echo "== /shutdown (v6.1): plane-only command, marker denied to workers, watcher/poller stop"
+echo "== v6.5 gates: plan template, keys map, slug resolution, tick hard-fail, board F1, FIFO, forbid"
+[ -f .history/_templates/plan.template.md ] && grep -q "A-slot" .history/_templates/plan.template.md \
+  && ok "plan template present with an A-slot per decision" \
+  || bad "plan template missing or has no A-slot"
+[ -f docs/workflow/keys.md ] && grep -q "frozen" docs/workflow/keys.md \
+  && ok "keys map present (one frozen table)" \
+  || bad "keys.md missing or not frozen"
+[ -f docs/workflow/delivery.md ] && grep -q "Delivery checklist" docs/workflow/delivery.md \
+  && ok "plane-side delivery checklist present" \
+  || bad "delivery.md missing"
+[ -f docs/workflow/core-spec.md ] && [ "$(grep -cE '^[0-9]+\. \*\*' docs/workflow/core-spec.md)" -eq 45 ] \
+  && ok "core spec carries the 45 items" \
+  || bad "core-spec.md missing or does not carry 45 items"
+grep -q "docs/workflow/keys.md" "$AGENT_DIR/commands/helper.md" \
+  && ok "helper allowlist carries the exact-file keys.md carve-out" \
+  || bad "helper.md lost the keys.md carve-out"
+# slug resolution at DECLARE (v6.5 §8.2) + tick --diff hard-fail.
+droot="$work/declare-root"
+mkdir -p "$droot/.history/2026-11-20-userlog-aspect-args" "$droot/.history/_bin"
+cp -r .history/_bin/linux "$droot/.history/_bin/linux"
+(cd "$droot" && DECLARE_ROLE_PID=99999 bash .history/_bin/linux/declare-role.sh worker userlog-aspect-args >/dev/null 2>&1)
+[ $? -eq 0 ] && grep -q 'slug=2026-11-20-userlog-aspect-args' "$droot/.history/_sessions/99999" \
+  && ok "declare-role resolves a unique short slug to the full slug" \
+  || bad "declare-role did not resolve the short slug"
+(cd "$droot" && DECLARE_ROLE_PID=99998 bash .history/_bin/linux/declare-role.sh worker bogus-slug >/dev/null 2>&1)
+[ $? -ne 0 ] \
+  && ok "declare-role refuses an unresolvable slug" \
+  || bad "declare-role accepted a bogus slug"
+(cd "$droot" && bash .history/_bin/linux/tick.sh --diff bogus-slug >/dev/null 2>&1)
+[ $? -ne 0 ] \
+  && ok "tick --diff hard-fails on an unresolvable slug" \
+  || bad "tick --diff silently passed a bogus slug"
+rm -rf "$droot/.history/_sessions/99999" "$droot/.history/_sessions/99998"
+# board F1 regression (v6.5 §8.2): a QUEUED-BEHIND-TOKEN manual-test
+# campaign renders queued (never done), current phase "manual test
+# (queued)", no FINAL-REVIEW gate; the token holder still renders current.
+bfroot="$work/board-f1-root"
+mkdir -p "$bfroot/.history/2026-11-20-userlog-aspect-args" "$bfroot/.history/2026-11-25-conclusion-self-send" "$bfroot/.history/_bin"
+cp -r .history/_bin/linux "$bfroot/.history/_bin/linux"
+printf '%s\n' \
+  '# TASK_LIST' '' \
+  '### 2026-11-20-userlog-aspect-args — IN_REVIEW (manual-test campaign QUEUED-BEHIND-TOKEN behind conclusion-self-send) · **Base branch**: `main` · **Agent branch**: `agent/userlog-aspect-args` · **Worktree**: `.worktree/userlog-aspect-args` · **Commits**: — (in progress)' \
+  '### 2026-11-25-conclusion-self-send — IN_REVIEW · **Base branch**: `main` · **Agent branch**: `agent/conclusion-self-send` · **Worktree**: `.worktree/conclusion-self-send` · **Commits**: — (in progress)' \
+  > "$bfroot/.history/TASK_LIST.md"
+printf '%s\n' \
+  '| Worker | Host:Pid | Launched-by | Phase | Write domain | Resource tokens | Claimed-at | Status | Granted-at | Notes |' \
+  '|---|---|---|---|---|---|---|---|---|' \
+  '| worker-cc-2 | host:1234 | human | impl | wt | - | t | RELEASED | t | - |' \
+  '| worker-cc-2 | host:1234 | human | unit-test | wt | - | t | RELEASED | t | - |' \
+  > "$bfroot/.history/2026-11-20-userlog-aspect-args/workers.md"
+printf '%s\n' \
+  '# worklog — userlog-aspect-args' '' \
+  '- 2026-11-25 19:52 — worker-cc-2: impl CLOSE, ANCHOR-PASS' \
+  '- state: WAITING kind:manual-test clearer:plane since:17:10' \
+  > "$bfroot/.history/2026-11-20-userlog-aspect-args/worklog.md"
+printf '%s\n' \
+  '# Plan — 2026-11-20-userlog-aspect-args' '' \
+  'Plan rev: 1' '' \
+  '| D# | Decision | Steps | Status |' \
+  '|---|---|---|---|' \
+  '| D1 | Use the new parser | S1, S2 | OPEN |' '' \
+  '### D1 — Use the new parser' \
+  '- **What**: switch to the shared claim-row parser' \
+  '- **Where**: `board.sh`, `tick.sh` — S1, S2' \
+  '- **Why**: one parser, both ledger shapes' \
+  '- **How**: source `claim-rows.sh`' \
+  '- **A-slot:** *(human fills: comment + verdict APPROVE / REVISE / DROP)*' \
+  > "$bfroot/.history/2026-11-20-userlog-aspect-args/plan.md"
+printf '# review — userlog-aspect-args\n\n| # | Title | Status | Blocks |\n' > "$bfroot/.history/2026-11-20-userlog-aspect-args/review.md"
+printf '# qa — userlog-aspect-args\n\n| # | Title | Status | Blocks |\n' > "$bfroot/.history/2026-11-20-userlog-aspect-args/qa.md"
+printf '# brief — userlog-aspect-args\n\n- **Goal**: fix the aspect-args userlog path\n' > "$bfroot/.history/2026-11-20-userlog-aspect-args/brief.md"
+printf '%s\n' \
+  '| # | Worker | Host:Pid | Launched-by | Phase | Method | Commitment | Write domain | Resource tokens | Claimed-at | Status | Risk | Granted-at | Notes |' \
+  '|---|---|---|---|---|---|---|---|---|---|---|---|---|' \
+  '| 1 | self-send | host:5678 | human | impl | md | impl | wt | - | t | RELEASED | low | t | - |' \
+  '| 2 | self-send | host:5678 | human | unit-test | md | tests | wt | - | t | RELEASED | low | t | - |' \
+  '| 3 | self-send | host:5678 | human | manual-test | md | campaign | main | manual-test-token | t | EXECUTING | low | t | - |' \
+  > "$bfroot/.history/2026-11-25-conclusion-self-send/workers.md"
+printf '%s\n' \
+  '# worklog — conclusion-self-send' '' \
+  '- 2026-11-25 19:52 — self-send: impl CLOSE, ANCHOR-PASS' \
+  '- state: ACTIVE manual-test' \
+  > "$bfroot/.history/2026-11-25-conclusion-self-send/worklog.md"
+printf '# Plan — 2026-11-25-conclusion-self-send\n\nPlan rev: 1\n\n| D# | Decision | Steps | Status |\n|---|---|---|---|\n| D1 | Ship the fix | S1 | APPROVED |\n' > "$bfroot/.history/2026-11-25-conclusion-self-send/plan.md"
+printf '# review — conclusion-self-send\n\n| # | Title | Status | Blocks |\n' > "$bfroot/.history/2026-11-25-conclusion-self-send/review.md"
+printf '# qa — conclusion-self-send\n\n| # | Title | Status | Blocks |\n' > "$bfroot/.history/2026-11-25-conclusion-self-send/qa.md"
+printf '# brief — conclusion-self-send\n\n- **Goal**: fix the conclusion self-send path\n' > "$bfroot/.history/2026-11-25-conclusion-self-send/brief.md"
+(cd "$bfroot" && bash .history/_bin/linux/board.sh >/dev/null 2>&1)
+# the parenthetical current-phase label (cur_label) renders on the task
+# page, not the overview — the overview carries the stepper titles
+# (`manual test: queued` / `manual test: current`).
+grep -q 'manual test (queued)' "$bfroot/.history/board/userlog-aspect-args.html" \
+  && grep -q 'cell queued' "$bfroot/.history/board.html" \
+  && ! grep -q 'FINAL-REVIEW</span>.*userlog-aspect-args' "$bfroot/.history/board.html" \
+  && grep -q 'D D1</span>.*userlog-aspect-args' "$bfroot/.history/board.html" \
+  && grep -q 'manual test (current)' "$bfroot/.history/board/conclusion-self-send.html" \
+  && ok "board F1: queued manual-test is queued (not done), no FINAL-REVIEW, plan D1 gated, token holder current" \
+  || bad "board F1 regression: queued campaign rendered done, or FINAL-REVIEW gated, or D1 missing, or holder wrong"
+grep -q "FIFO" docs/workflow/verify-duties.md && grep -q "FIFO" docs/workflow/control-plane-instructions.md \
+  && ok "CLOSE verify is FIFO — oldest WAITING first" \
+  || bad "FIFO fairness rule missing from verify-duties or control-plane-instructions"
+grep -q "never dispatch" "$AGENT_DIR/commands/worker.md" \
+  && grep -q "never dispatches plan-review" "$AGENT_DIR/skills/plan-review/SKILL.md" \
+  && grep -q "never dispatches §3.1" "$AGENT_DIR/skills/pre-test-review/SKILL.md" \
+  && grep -q "never dispatches test-result-review" "$AGENT_DIR/skills/test-result-review/SKILL.md" \
+  && ok "forbid rule stated in worker.md + all three review skills (v6.4.3)" \
+  || bad "forbid rule missing from a review skill or worker.md"
+
+echo "== /shutdown (v6.1): plane-only command, marker denied to workers, runner stop"
 [ -f "$AGENT_DIR/commands/shutdown.md" ] \
   && ok "shutdown command present under $AGENT_DIR/commands/" \
   || bad "shutdown command missing from $AGENT_DIR/commands/"
@@ -1377,47 +1517,31 @@ grep -q "shutdown.sh" "$AGENT_DIR/commands/shutdown.md" \
 [ "$(hook plane "" "$(j_edit "$hr/.history/SHUTDOWN.md" "$hr")")" = 0 ] \
   && ok "hook allows the plane to write the shutdown marker" \
   || bad "hook blocked the plane's shutdown marker write"
-# watcher exits on the stop marker: startup check fires before the state
-# write, and the loop-top check fires when the marker appears mid-run.
-swroot="$work/shutdown-watch-root"
+# runner exits on the stop marker: the startup check fires before any
+# state write — a stillborn runner leaves no state dir (there is no
+# loop-top check to test: a single-cycle runner has no mid-run).
+swroot="$work/shutdown-runner-root"
 mkdir -p "$swroot/.history/_bin"
 cp -r .history/_bin/linux "$swroot/.history/_bin/linux"
 touch "$swroot/.history/._watcher_stop"
-printf '.history/2026-11-11-demo/worklog.md\n' | (cd "$swroot" && PLANE_WATCH_DEBOUNCE=1 bash .history/_bin/linux/plane-watch.sh . --test-mode >/dev/null 2>&1)
-[ -f "$swroot/.history/._watcher_state" ] \
-  && bad "watcher wrote state despite the stop marker" \
-  || ok "watcher with a stop marker starts nothing (no state file)"
-grep -q 'stop marker present — watcher not starting' "$swroot/.history/_watcher.log" \
-  && ok "watcher logs the stop marker at startup" \
-  || bad "watcher did not log the stop marker"
-swroot2="$work/shutdown-watch-root2"
-mkdir -p "$swroot2/.history/_bin"
-cp -r .history/_bin/linux "$swroot2/.history/_bin/linux"
-( printf '.history/2026-11-11-demo/worklog.md\n'; sleep 0.3; touch "$swroot2/.history/._watcher_stop"; printf '.history/2026-11-11-demo/worklog.md\n'; sleep 0.2 ) \
-  | ( cd "$swroot2" && PLANE_WATCH_DEBOUNCE=1 bash .history/_bin/linux/plane-watch.sh . --test-mode >/dev/null 2>&1 )
-[ $? -eq 0 ] && grep -q 'stop marker present — watcher stopping' "$swroot2/.history/_watcher.log" \
-  && ! grep -q 'watcher not starting' "$swroot2/.history/_watcher.log" \
-  && ok "watcher exits at the next cycle when the stop marker appears mid-run" \
-  || bad "watcher did not stop on a mid-run stop marker"
-# plane-poll exits at once on the stop marker (and runs no tick/scans).
-sproot="$work/shutdown-poll-root"
+(cd "$swroot" && bash .history/_bin/linux/runner.sh >/dev/null 2>&1)
+[ $? -eq 0 ] \
+  && ok "runner exits 0 on the stop marker without running tick" \
+  || bad "runner did not exit cleanly on the stop marker"
+[ ! -d "$swroot/.history/._runner_state" ] \
+  && ok "runner with the marker runs no scans (no state dir)" \
+  || bad "runner with the marker still ran scans"
+grep -q 'stop marker present — runner not starting' "$swroot/.history/_runner.log" \
+  && ok "runner logs the stop marker at startup" \
+  || bad "runner did not log the stop marker"
+# without the marker, the runner runs tick and fails with no lock.
+sproot="$work/shutdown-runner-root2"
 mkdir -p "$sproot/.history/_bin"
 cp -r .history/_bin/linux "$sproot/.history/_bin/linux"
-(cd "$sproot" && bash .history/_bin/linux/plane-poll.sh >/dev/null 2>&1)
+(cd "$sproot" && bash .history/_bin/linux/runner.sh >/dev/null 2>&1)
 [ $? -ne 0 ] \
-  && ok "without the marker, plane-poll runs tick and fails with no lock" \
-  || bad "plane-poll passed with no lock — the no-marker baseline is broken"
-sproot2="$work/shutdown-poll-root2"
-mkdir -p "$sproot2/.history/_bin"
-cp -r .history/_bin/linux "$sproot2/.history/_bin/linux"
-touch "$sproot2/.history/._watcher_stop"
-(cd "$sproot2" && bash .history/_bin/linux/plane-poll.sh >/dev/null 2>&1)
-[ $? -eq 0 ] \
-  && ok "plane-poll exits 0 on the stop marker without running tick" \
-  || bad "plane-poll did not exit cleanly on the stop marker"
-[ ! -d "$sproot2/.history/._poll_schedule" ] \
-  && ok "plane-poll with the marker runs no scans (no schedule dir)" \
-  || bad "plane-poll with the marker still ran scans"
+  && ok "without the marker, runner runs tick and fails with no lock" \
+  || bad "runner passed with no lock — the no-marker baseline is broken"
 # init re-run delivers a new command file (and never overwrites adopted ones).
 iprobe2="$work/init-probe2"
 mkdir -p "$iprobe2/.history/_templates" "$iprobe2/.history/_bin"

@@ -6,7 +6,7 @@ Append-only: never rewrite above your last entry. Raw traces go to `debug-notes.
 - <YYYY-MM-DD HH:MM> — <who>: <state change / decision / blocker / guidance received>
   - Method: <worker-local protocol> / Commitment: <steps for this phase> (first entry)
 - state lines (one per transition, holds as the worklog's last line while active):
-  `state: ACTIVE <phase>` / `state: WAITING kind:<answer|dependency|access> clearer:<who> since:<HH:MM>` /
+  `state: ACTIVE <phase>` / `state: WAITING kind:<answer|dependency|access|plan-approval> clearer:<who> since:<HH:MM>` /
   `state: BLOCKED kind:<decision|dependency|access|process> clearer:<who> since:<HH:MM>`
 - Successor handoff (when resuming in a new session): <discoveries + file pointers;
   decisions; tests/evidence; current state; exact next action>
@@ -16,6 +16,7 @@ Append-only: never rewrite above your last entry. Raw traces go to `debug-notes.
 ## Closing entry (control plane, <date>)
 
 - Status: <DONE / DELIVERED>
+- chain: <hash> (chain.sh append after the successor handoff is written, never before — the chain line closes the entry)
 - Knowledge extraction: <memory files created/updated>
 - Worktree/branch disposition: <removed at DELIVERED / branch kept for user>
 - Polling schedule / manual-resume fallback: <intervals / operator>

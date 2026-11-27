@@ -15,20 +15,13 @@ verdict informs the human's approval; approval itself is human-held.
 - `task-slug` → task dir `.history/<slug>/`
 - `effort` — low | medium (default) | high
 
-**Scoped context, mandatory**: adjudicate ONLY on what is listed below +
-what you read yourself from the plan doc and repo (read-only). You never
-inherit or infer from the plane session's wider conversation — the brief
-charter is the whole requirement universe. If the plan references a
-decision you cannot see (qa answer, ruling), flag it as a finding
-("unverifiable reference — surface to human"), never guess it.
-
 ## Context, in order (read-first discipline)
 
 1. `brief-impl.md` (charter) — acceptance scope, manual-test direction,
    constraints, gates. This is the yardstick.
 2. Task `qa.md` — released answers the plan claims to consume.
-3. The plan doc itself (`docs/superpowers/plans/<YYYY-MM-DD>-<slug>.md`
-   unless the worklog pointer says otherwise) + its ledger if present.
+3. The plan itself (`<task-dir>/plan.md` — the gate file; the narrative
+   Superpowers plan it links is detail) + its ledger if present.
 4. `worklog.md` tail — the declare entry + any plan-loop iterations.
 
 ## Checks (every pass)
@@ -59,17 +52,31 @@ Append to `worklog.md` under the task dir (never review.md):
 
 ```
 ## plan-review (subagent, effort=X) — VERDICT: <CLEAN|CHANGES-NEEDED>
-- findings: numbered P1, P2… (charter-fit, coverage, reality checks)
+- findings: numbered P1, P2… (charter-fit, coverage, reality checks);
+  each cites the Dn it targets
 - each finding: what + where in the plan + suggested direction
 ```
 
-`VERDICT: CLEAN` → the plane surfaces plan + verdict to the human for
-approval. `CHANGES-NEEDED` → the worker revises the plan (plan loop);
-you re-run on the revised plan. **You never approve. You never edit the
-plan, code, or any ledger other than this worklog entry.**
+`VERDICT: CLEAN (rev N)` → the plane side of the agreement only — the
+plane waits for the worker's rev-cited acceptance line before surfacing;
+CLEAN alone is not the agreement. `CHANGES-NEEDED` → the worker revises
+the plan (plan loop); you re-run on the revised plan. A contested finding
+goes back to the plane (it upholds or drops it) — never re-review your own
+finding. **You never approve. You never edit the plan, code, or any
+ledger other than this worklog entry.**
 
 ## Guards
 
+- Scoped context, mandatory: adjudicate ONLY on the Context list above +
+  what you read yourself from the plan and repo (read-only). You never
+  inherit or infer from the plane session's wider conversation — the brief
+  charter is the whole requirement universe. If the plan references a
+  decision you cannot see (qa answer, ruling), flag it as a finding
+  ("unverifiable reference — surface to human"), never guess it.
+- Writable file: the task worklog.md (your plan-review entry only).
+  Everything else is read-only.
+- You are plane-spawned; a worker never dispatches plan-review (or §3.1 /
+  test-result-review) — those sub-agents are plane-owned.
 - Read-only repo access; no worktree mutation; no builds/tests.
 - No subagent spawns; no talking to the worker.
 - One entry per pass; findings monotonic (P-numbers) across passes.

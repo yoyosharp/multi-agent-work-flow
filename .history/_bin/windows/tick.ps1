@@ -7,6 +7,8 @@
 param([switch]$Diff, [switch]$Plane, [string[]]$Slugs = @())
 $ErrorActionPreference = 'SilentlyContinue'
 Set-Location (Join-Path $PSScriptRoot '..\..\..')
+# Shared claim-row parser (v6.5, L-C4) — dot-sourced before any parsing.
+. (Join-Path $PSScriptRoot 'claim-rows.ps1')
 $WorkerScope = $Slugs.Count -gt 0
 $LockStale = if ($env:LOCK_STALE) { [int]$env:LOCK_STALE } else { 3600 }
 # Poll-rate ladder: adaptive cadence vs the fixed */3 (idle sessions re-read a
@@ -57,32 +59,10 @@ if (-not $Slugs -or $Slugs.Count -eq 0) {
   } | ForEach-Object { $_.Name }
 }
 
-# Header-indexed claim-row parse: column roles come from the table header,
-# not fixed positions (v5.1 added Method/Commitment — positional [9] would
-# misread Status). Falls back to the pre-v5.1 layout without a Status header.
-function Get-ClaimCols($wmPath) {
-  $map = $null
-  foreach ($line in Get-Content $wmPath) {
-    if ($line -match '^\|\s*#\s*\|') {
-      $cols = $line -split '\|' | ForEach-Object { $_.Trim() }
-      $map = @{}
-      for ($i = 1; $i -lt $cols.Count; $i++) {
-        $h = ($cols[$i] -replace '#.*$','').Trim()
-        if ($h -eq 'Status') { $map['S'] = $i }
-        elseif ($h -eq 'Phase') { $map['P'] = $i }
-        elseif ($h -eq 'Worker') { $map['W'] = $i }
-      }
-      break
-    }
-  }
-  if (-not $map -or -not $map.ContainsKey('S')) { $map = @{ S = 9; P = 5; W = 2 } }  # legacy fallback
-  return $map
-}
-
 function Get-TaskBlock($slug) {
   $d = ".history\$($slug.TrimEnd('/\'))\"
   $lines = @("plane-lock: $(Get-LockState)")
-  foreach ($f in 'worklog.md','workers.md','inbox.md','qa.md','review.md') {
+  foreach ($f in 'worklog.md','workers.md','inbox.md','qa.md','review.md','plan.md') {
     $p = Join-Path $d $f
     if (Test-Path $p) {
       $m = (Get-Item $p).LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')
@@ -92,12 +72,9 @@ function Get-TaskBlock($slug) {
   }
   $wm = Join-Path $d 'workers.md'
   if (Test-Path $wm) {
-    $m = Get-ClaimCols $wm
-    foreach ($line in Get-Content $wm) {
-      if ($line -match '^\|\s*\d+\s*\|') {
-        $cols = $line -split '\|' | ForEach-Object { $_.Trim() }
-        if ($cols.Count -gt $m['S']) { $lines += "  row $($cols[1]) [$($cols[$m['W']])] $($cols[$m['P']]) — $($cols[$m['S']])" }
-      }
+    # claim-row snapshot: the shared parser (both ledger shapes)
+    foreach ($row in (Get-ClaimRows $wm)) {
+      $lines += "  row $($row.Num) [$($row.Worker)] $($row.Phase) — $($row.Status)"
     }
   }
   $wl = Join-Path $d 'worklog.md'
@@ -128,6 +105,18 @@ if (-not $Diff) {
   exit 0
 }
 
+# --Diff hard-fails on an unresolvable slug (v6.5 §8.2): a silent empty
+# diff on a wrong slug once left a worker blind for ~2h. Display mode
+# keeps its visible "no such task" line (above).
+if ($Diff) {
+  foreach ($slug in $Slugs) {
+    if (-not (Test-Path ".history\$slug")) {
+      Write-Error "tick: no such task: $slug — check the slug (declare-time resolution lives in declare-role.ps1)"
+      exit 1
+    }
+  }
+}
+
 # Role-split snapshots: the plane's probe must not consume the workers'
 # change signal (and vice versa). One shared snapshot let a fast plane poll
 # mark task artifacts "seen", starving the worker's tick of its own charter
@@ -146,12 +135,9 @@ function Get-Markers {  # >0 when some marker makes fast reaction worthwhile
   foreach ($tdir in (Get-ChildItem .history -Directory)) {
     $wm = Join-Path $tdir.FullName 'workers.md'
     if (-not (Test-Path $wm)) { continue }
-    $m = Get-ClaimCols $wm
-    foreach ($line in Get-Content $wm) {
-      if ($line -match '^\|\s*\d+\s*\|') {
-        $cols = $line -split '\|' | ForEach-Object { $_.Trim() }
-        if ($cols.Count -gt $m['S'] -and $cols[$m['S']] -match '^(GRANTED|EXECUTING|DECLARED|STALE|CHALLENGED)') { $n++ }
-      }
+    foreach ($row in (Get-ClaimRows $wm)) {
+      $first = ($row.Status -split ' ')[0]
+      if ($first -match '^(GRANTED|EXECUTING|DECLARED|STALE|CHALLENGED)$') { $n++ }
     }
     $qa = Join-Path $tdir.FullName 'qa.md'
     if (Test-Path $qa) {
@@ -166,6 +152,16 @@ function Get-Markers {  # >0 when some marker makes fast reaction worthwhile
           $cols = $line -split '\|' | ForEach-Object { $_.Trim() }
           $last = $cols[$cols.Count - 2]
           if ($last -notmatch 'RESOLVED|DROPPED') { $n++ }
+        }
+      }
+    }
+    $plan = Join-Path $tdir.FullName 'plan.md'
+    if (Test-Path $plan) {
+      foreach ($line in Get-Content $plan) {
+        if ($line -match '^\|\s*D\d+') {
+          $cols = $line -split '\|' | ForEach-Object { $_.Trim() }
+          $last = $cols[$cols.Count - 2]
+          if ($last -eq 'OPEN') { $n++ }
         }
       }
     }

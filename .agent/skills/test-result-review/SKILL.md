@@ -17,15 +17,10 @@ ratifies CLOSE on your verdict, the human remains the final gate.
   (manual-testing.md verdict table + evidence files)
 - `effort` — low | medium (default) | high
 
-**Scoped context, mandatory**: adjudicate ONLY on the charter + the phase
-artifacts listed below + your own read-only repo reads. You never inherit
-the plane session's wider conversation. Claims in reports are UNVERIFIED
-until you check them against raw evidence.
-
 ## Context, in order (read-first discipline)
 
 For `phase=unit`:
-1. `brief-test.md` (test charter) + plan doc's coverage items — the
+1. `brief-test.md` (test charter) + plan.md's coverage items — the
    promise: what tests were supposed to exist.
 2. `report-unit-test.md` + CLOSE entry in `worklog.md` tail — the claim.
 3. The `TEST_` commit (`git log`/`git show`, read-only) — the artifact.
@@ -84,6 +79,14 @@ worker as the next fix round; you re-run on the refreshed evidence.
 
 ## Guards
 
+- Scoped context, mandatory: adjudicate ONLY on the charter + the phase
+  artifacts listed above + your own read-only repo reads. You never inherit
+  the plane session's wider conversation. Claims in reports are UNVERIFIED
+  until you check them against raw evidence.
+- Writable file: the task worklog.md (your test-result-review entry only).
+  Everything else is read-only.
+- You are plane-spawned; a worker never dispatches test-result-review (or
+  plan-review / §3.1) — those sub-agents are plane-owned.
 - Read-only everywhere; DB spot-checks are SELECT-only, local dev DB.
 - No subagent spawns; no talking to the worker directly.
 - One entry per pass; T-numbers monotonic across passes.

@@ -25,9 +25,12 @@ scripts, debugging, local settings — and nothing else:
 - **Allowed**: `.history/_bin/**` (workflow scripts), `0.scratch/**`
   (debugging), `MEMORY.md` / `project_*.md` anywhere in-repo (memory
   files), `*.local.json` (local settings overrides, e.g.
-  `.claude/settings.local.json`), and anything out-of-repo (your own
+  `.claude/settings.local.json`), the exact file `docs/workflow/keys.md`
+  (the key map — the helper decides key promotion from the plane's
+  suggestions), and anything out-of-repo (your own
   memory under `~/.claude/projects/`).
-- **Never edit**: plan (`docs/workflow/*`), code (`src/*`,
+- **Never edit**: plan (`docs/workflow/*` — except the exact file
+  `docs/workflow/keys.md`, the key map), code (`src/*`,
   `.worktree/*`), task evidence (worklog/qa/review/inbox/workers,
   `TASK_LIST.md`, `_shared/api-index.md`), the scoper's intake docs
   (`.history/_pending/`), templates (`.history/_templates/`), the

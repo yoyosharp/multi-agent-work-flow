@@ -4,7 +4,8 @@
 # brace groups, substitutions) drift out of every allowlist rule and
 # prompt each time (observed 2026-11-03: evidence appends mid-campaign);
 # a fixed script is allowlisted once as an exact path — same rationale
-# as tick.sh. Format matches api.sh log_entry/log_resp.
+# as tick.sh. Format must match api.sh log_entry/log_resp — same evidence
+# format, two allowlisted paths.
 #
 # Usage:
 #   evidence.sh <slug> log '<heading>' '<request-body|->>' ['<session-label|->']

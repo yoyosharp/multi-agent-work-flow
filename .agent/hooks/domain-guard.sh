@@ -339,12 +339,24 @@ fi
 
 TASKDIR=""
 if [ -n "$SLUG" ]; then
-  for d in "$ROOT"/.history/*-"$SLUG"; do
-    [ -d "$d" ] && { TASKDIR="$d"; break; }
-  done
+  # exact full slug first (the registry holds the resolved full slug
+  # since v6.5 declare-time resolution), then the short-slug suffix glob
+  # (env-var / cwd-derived short slugs) — same rule as server.sh
+  # resolve_taskdir.
+  if [ -d "$ROOT/.history/$SLUG" ]; then
+    TASKDIR="$ROOT/.history/$SLUG"
+  else
+    for d in "$ROOT"/.history/*-"$SLUG"; do
+      [ -d "$d" ] && { TASKDIR="$d"; break; }
+    done
+  fi
 fi
 
 # --- rule 1: secrets + self-protection ----------------------------------
+# The only authorised edit to a rule-1-protected file is the workflow-init
+# step 5 allowlist replacement (intranet hosts) — see
+# .agent/skills/workflow-init/SKILL.md step 5; every other edit to a
+# rule-1 file is denied.
 if [ -n "$FPATH" ]; then
   case "$TOOL" in Edit|Write|Read)
     APATH=$(norm "$FPATH")
@@ -489,8 +501,12 @@ if [ "$TOOL" = "Edit" ] || [ "$TOOL" = "Write" ]; then
   elif [ "$ROLE" = "helper" ]; then
     # Helper allowlist, fail-closed: _bin/ SCRIPTS only (*.sh/*.ps1 —
     # api-config.env is plane-owned config, not a script) + 0.scratch/ +
-    # memory files + local settings files. Everything else in-repo denied.
-    if under "$APATH" "$ROOT/0.scratch"; then
+    # memory files + local settings files + the key map
+    # (docs/workflow/keys.md — the helper alone decides key promotion).
+    # Everything else in-repo denied.
+    if [ "$APATH" = "$ROOT/docs/workflow/keys.md" ]; then
+      : # allowed — the key map
+    elif under "$APATH" "$ROOT/0.scratch"; then
       : # allowed (debugging/scratch)
     elif under "$APATH" "$ROOT/.history/_bin"; then
       case "$(basename "$APATH")" in
@@ -500,16 +516,52 @@ if [ "$TOOL" = "Edit" ] || [ "$TOOL" = "Write" ]; then
     else
       case "$(basename "$APATH")" in
         MEMORY.md|project_*.md|*.local.json) : ;;
-        *) deny "helper may edit only _bin/ scripts, 0.scratch/, memory files (MEMORY.md, project_*.md) and *.local.json: $FPATH" ;;
+        *) deny "helper may edit only _bin/ scripts, 0.scratch/, memory files (MEMORY.md, project_*.md), *.local.json, and docs/workflow/keys.md: $FPATH" ;;
       esac
     fi
   else
     [ -n "$SLUG" ] || deny "no task slug: run declare-role.sh worker <slug> or run from the task worktree"
-    WT="$ROOT/.worktree/$SLUG"
+    # worktree resolution: exact full slug first (the documented
+    # `git worktree add .worktree/<task-slug>`), then the short slug
+    # (worktrees named by the short slug, as in older projects), then
+    # the short-suffix glob — same rule as stale.sh (Q-L5). The
+    # registry holds the resolved full slug since v6.5, so a bare
+    # `.worktree/$SLUG` is wrong for short-named worktrees.
+    WT=""
+    if [ -d "$ROOT/.worktree/$SLUG" ]; then
+      WT="$ROOT/.worktree/$SLUG"
+    else
+      _short="${SLUG#[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-}"
+      if [ -d "$ROOT/.worktree/$_short" ]; then
+        WT="$ROOT/.worktree/$_short"
+      else
+        for _cand in "$ROOT"/.worktree/*-"$_short"; do
+          [ -d "$_cand" ] && { WT="$_cand"; break; }
+        done
+      fi
+    fi
+    [ -n "$WT" ] || WT="$ROOT/.worktree/$SLUG"
     if under "$APATH" "$WT"; then
-      # claim-row path tokens, best effort (rule 4)
+      # claim-row path tokens, best effort (rule 4) — header-indexed
+      # (Status + Write domain columns by name, both ledger shapes);
+      # pre-v5.1 positional fallback when the header carries no Status
+      # column (Write domain was cell 6 there). No header at all means
+      # no tokens, so no enforcement — best effort, never a false deny.
       if [ -n "$TASKDIR" ] && [ -f "$TASKDIR/workers.md" ]; then
-        TOKENS=$(awk -F'|' '$12 ~ /EXECUTING|GRANTED/ {print $9}' "$TASKDIR/workers.md" \
+        TOKENS=$(awk -F'|' '
+          function trim(x){gsub(/^ +| +$/,"",x); return x}
+          /^\|/ {
+            ishdr=0
+            for (i=2; i<=NF; i++) { if (trim($i)=="Phase") { ishdr=1; break } }
+            if (ishdr) {
+              si=0; wi=0
+              for (i=2; i<=NF; i++) { h=trim($i); sub(/#.*/,"",h); if (h=="Status") si=i; else if (h=="Write domain") wi=i }
+              hdr=1; next
+            }
+            if (trim($2) ~ /^-+$/) next
+            if (hdr && si && wi && trim($si) ~ /EXECUTING|GRANTED/) print trim($wi)
+            else if (!hdr && $2 ~ /^[ ]*[0-9]+[ ]*$/) { if (trim($10) ~ /EXECUTING|GRANTED/) print trim($7) }
+          }' "$TASKDIR/workers.md" \
           | tail -1 | tr ',;' '  ' | tr ' ' '\n' | grep '/' \
           | sed -e 's:/\*\*$::' -e 's:/\*$::' -e 's:^\./::' -e 's:^/::' \
           | grep -v '^$' | sort -u)

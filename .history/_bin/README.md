@@ -7,30 +7,28 @@ which can drift into permission prompts. Same inventory per platform:
 | Script | Purpose | Writes? |
 |---|---|---|
 | `tick` | Change probe: task artifacts, claim rows, worklog tail, worktree state. `--diff` emits changed sections only; unchanged = no output. Emits `POLL-RATE x → y` on cadence transitions. | private snapshots |
-| `plane-watch` | Event-driven wake (v6): watches `.history/`, debounces 15 s, runs `tick --plane --diff`, wakes the plane via tmux only on a non-empty diff. Phase 2: also wakes a WAITING worker's registered pane when its `inbox.md` changes. After a non-empty-diff cycle it also regenerates `.history/board.html` + task pages (track G; board.html and board/ are watch-excluded and outside tick's diff, so no self-trigger — a failed regen is logged, never fatal). Supervised by `plane-poll`. Linux/macOS only. | `.history/_watcher_state`, `.history/_watcher.log` |
+| `runner` | Periodic runner (v6.5): one cycle every 3 min — runs `tick --plane --diff`, wakes the plane via tmux only on a non-empty diff; wakes a WAITING worker's registered pane when its `inbox.md` changes; runs the overdue check (WAITING rows older than `STALE_AFTER`, oldest first) and wakes the plane with an overdue notice; regenerates `.history/board.html` + task pages only when the diff is non-empty (board.html and board/ are outside tick's diff, so no self-trigger — a failed regen is logged, never fatal). Replaces `plane-watch` + `plane-poll` (both deleted in v6.5). Linux/macOS + Windows (`runner.ps1` via Task Scheduler). | `.history/._runner_state`, `.history/_runner.log` |
+| `claim-rows` | Shared claim-row parser (v6.5): `claim_rows <workers.md>` → TSV `num<TAB>worker<TAB>phase<TAB>status<TAB>risk` (both header shapes, old shape included); `close_text <worklog.md>` → the last CLOSE block. Sourced by board, tick, status, stale, chain, closecheck, shutdown, selftest. Windows: `claim-rows.ps1`. | no |
+| `wake` | Shared tmux wake helper (v6.5, Linux/macOS): `send_wake <pane> <message>` — pane-alive + agent-CLI checks, never guessed. Sourced by runner.sh and shutdown.sh. | no |
 | `chain` | Hash-chained evidence log (v6): `chain.sh append <slug>` chains a CLOSE entry, `chain.sh verify <slug>` checks the chain; `closecheck.sh anchors` verifies it at CLOSE. Windows: `chain.ps1` (untested). | task worklog `chain: <hash>` lines |
 | `merge-index` | API index merge (v6): `merge-index.sh <rows-file>` merges a worker's task-dir rows into `.history/_shared/api-index.md` — newest `last-verified-by` wins per `METHOD + path`, origin `discovered-by` kept. Refuses rows carrying secret values (bearer/JWT/password/api-key/token). Run by the plane at CLOSE (ratify). Windows: `merge-index.ps1` (untested). | shared index |
 | `server` | Blessed server lifecycle (v6): `server.sh <slug> start\|stop\|status` boots/stops the manual-test app server from `MT_BOOT_CMD` in `api-config.env` and records a pidfile; `stop` takes no pid argument and verifies the live pid (cmdline marker `MT_SERVER_MATCH` + worktree cwd + task port) before killing just that pid. Raw `kill`/`pkill`/`killall` is hook-blocked. Windows: `server.ps1`, exercised by the native `run-server-matrix.ps1` probe; it verifies cmdline marker + listening port, but has no worktree-cwd check and no native kill-hook. | task pidfile `server.pid` |
-| `declare-role` | Declare this session's workflow role to the hook registry (v6.3): `declare-role.sh <role> [slug]` writes `.history/_sessions/<agent-pid>` (`role=`, and for worker `slug=`); the hook reads the registry first, then the env var, then cwd. No env var or cd needed — the command declares the role itself. Windows: `declare-role.ps1`. | the session's own registry file |
-| `eval` | 40-scenario eval suite (v6, tracks D + E + F + G + H): installs the package fresh in a temp project and checks init, selftest, scaffold, tick, anchors, ratify, risk, chain, watcher, Stop hook, backstop, templates, domain guard, line cap, metrics row, API index (miss/hit/stale/merge-conflict/cross-machine/migration), server lifecycle (start/test/stop, forged pidfile, server left running at CLOSE), board categories (kinds, chips, counts), auto-refresh tag, watcher board regen, board v2 (gates inbox, fleet matrix, task page), lock holder parsing (malformed lock, stale takeover). Linux/macOS only. | stdout `EVAL-PASS` / `EVAL-FAIL` |
-| `plane-poll` | One scheduled plane invocation: runs `tick --plane --diff`, then stale/relay scans when due. `--stale-now` forces a stale scan before a conflict. | snapshots, scan schedule |
-| `lock` | plane.lock take/status/heartbeat/release; holder parsed from the `^host:pid` line only (v6 track H — the old whole-file regex read the timestamp as the holder); Windows take formats host:pid with `-f` (no adjacent-variable interpolation). Windows: `lock.ps1`. | plane.lock only |
+| `declare-role` | Declare this session's workflow role to the hook registry (v6.3): `declare-role.sh <role> [slug] [label]` writes `.history/_sessions/<agent-pid>` (`role=`, and for worker `slug=`); the hook reads the registry first, then the env var, then cwd. A short slug resolves to its unique full slug at DECLARE (no match or ambiguous → refused). No env var or cd needed — the command declares the role itself. Windows: `declare-role.ps1`. | the session's own registry file |
+| `eval` | 40-scenario eval suite (v6, tracks D + E + F + G + H): installs the package fresh in a temp project and checks init, selftest, scaffold, tick, anchors, ratify, risk, chain, runner, Stop hook, templates, domain guard, line cap, metrics row, API index (miss/hit/stale/merge-conflict/cross-machine/migration), server lifecycle (start/test/stop, forged pidfile, server left running at CLOSE), board categories (kinds, chips, counts), auto-refresh tag, runner board regen, board v2 (gates inbox, fleet matrix, task page), lock holder parsing (malformed lock, stale takeover). Windows: `eval.ps1` (same 40 scenarios; hook + board scenarios skip — no bash hook / no board.ps1 on Windows; server scenarios skip when no python is on PATH; the 16b leak check is linux-only). | stdout `EVAL-PASS` / `EVAL-FAIL` |
+| `lock` | plane.lock take/status/heartbeat/release; holder parsed from the `^host:pid` line only (v6 track H — the old whole-file regex read the timestamp as the holder); Windows take formats host:pid with `-f` (no adjacent-variable interpolation). Mac: holder liveness via `lsof -p` (cwd check); Windows: live-pid + age only, no cwd binding (disclosed gap). Heartbeat: `lock.sh heartbeat` (Linux/macOS; `lock.ps1 heartbeat` on Windows). Windows: `lock.ps1`. | plane.lock only |
 | `status` | board: TASK_LIST, claim rows, signal freshness, worktrees | no |
-| `board` | Human UI tracker (v6.4 Board v2): one-shot writes `.history/board.html` + per-task pages `.history/board/<slug>.html`; `board.sh serve [port]` = localhost:8791, reload = regenerate, and serve mode enables the gate forms. Overview: pulse tiles, gates-only inbox (open Q/F A-slots, BLOCKED clearer:human, plan/final-review/delivery gates — running/finished work never appears), fleet matrix (tasks × 14 phases), live tasks with mini-steppers + filter chips, plane messages demoted to a collapsed Activity feed. Task page: goal/risk/branches, 14-step stepper (gate nodes distinct, manual-test waived shown grey), delivery-prerequisites checklist (derived, never stored), docs tabs rendered by a small vendored JS markdown renderer (one delimited, swappable block; source toggle + IDE deep link), Compact/All/Raw worklog trace. WRITE RULE: forms write ONLY on an explicit Submit press — typing is a local draft, no autosave; one Submit writes the batch; a Submit is fill+release in one step (A-slot filled + status row → RELEASED), guarded by the rendered file's sha256 (stale → 409, no write); POST /relay appends one canonical inbox row (PLAN-APPROVED / WAIVE / FINAL-REVIEW-CONFIRMED / DELIVERY-APPROVED). Static mode renders the same gates read-only. Plane messages carry `kind:<question\|decision\|blocker\|status\|handoff>` (track G; no marker → uncategorized, never dropped), filter chips in the Activity feed. Auto-refresh every 180 s (`BOARD_REFRESH_SECS`, 0 disables) with scroll restore; the watcher regenerates the static files after a non-empty diff (board.html + board/ are watch-excluded). Linux/macOS only. | `.history/board.html`, `.history/board/*.html`; serve-mode Submit: the task's qa.md/review.md A-slots + status rows, inbox.md relay rows, worklog trace lines |
+| `board` | Human UI tracker (v6.4 Board v2): one-shot writes `.history/board.html` + per-task pages `.history/board/<slug>.html`; `board.sh serve [port]` = localhost:8791, reload = regenerate, and serve mode enables the gate forms. Overview: pulse tiles, gates-only inbox (open Q/F A-slots, BLOCKED clearer:human, plan/final-review/delivery gates — running/finished work never appears), fleet matrix (tasks × 14 phases), live tasks with mini-steppers + filter chips, plane messages demoted to a collapsed Activity feed. Task page: goal/risk/branches, 14-step stepper (gate nodes distinct, manual-test waived shown grey), delivery-prerequisites checklist (derived, never stored), docs tabs rendered by a small vendored JS markdown renderer (one delimited, swappable block; source toggle + IDE deep link), Compact/All/Raw worklog trace. WRITE RULE: forms write ONLY on an explicit Submit press — typing is a local draft, no autosave; one Submit writes the batch; a Submit is fill+release in one step (A-slot filled + status row → RELEASED), guarded by the rendered file's sha256 (stale → 409, no write); POST /relay appends one canonical inbox row (PLAN-APPROVED / WAIVE / FINAL-REVIEW-CONFIRMED / DELIVERY-APPROVED). Static mode renders the same gates read-only. Plane messages carry `kind:<question\|decision\|blocker\|status\|handoff>` (track G; no marker → uncategorized, never dropped), filter chips in the Activity feed. Auto-refresh every 180 s (`BOARD_REFRESH_SECS`, 0 disables) with scroll restore; the runner regenerates the static files after a non-empty diff (board.html + board/ are outside tick's diff). Linux/macOS only. | `.history/board.html`, `.history/board/*.html`; serve-mode Submit: the task's qa.md/review.md/plan.md A-slots + status rows, inbox.md relay rows, worklog trace lines |
 | `relays` | ANSWERED qa rows, open review findings, open passes, stale inboxes | no |
 | `stale` | per-claim staleness ladder (worklog age, commits, domain writes) | no |
 | `closecheck` | CLOSE inputs: branch commits, clean tree, reports, DONE, SHAs. `closecheck.sh anchors <slug>` (`.ps1 -Anchors`) runs the v5 anchor gate over the last CLOSE entry — active by default in this package. | no |
 | `delivery` | pre-flight: commits on agent branch, non-TEST_ cherry-pick list, verdict | no |
-| `scaffold` | seed task dir from templates (idempotent, never overwrites) | task dir files |
-| `init` | Project-level init for v6: pre-install floor check, dirs/per-component gitignore/pointer block/TASK_LIST/api-config, API index seed (`.history/_shared/api-index.md`), `.claude` (mapped from package `.agent/`) symlinks into worktrees; idempotent, receipted (`.history/_init_receipt.md`). `--check-only` runs the floor check with no writes (and previews the gitignore/index changes). Migrates the old blanket `.history/` ignore on re-run. | receipt file |
+| `scaffold` | seed task dir from templates (workers.md/qa.md/worklog.md/inbox.md/plan.md; idempotent, never overwrites) | task dir files |
+| `init` | Project-level init for v6: pre-install floor check, dirs/per-component gitignore/pointer block/TASK_LIST/api-config, API index seed (`.history/_shared/api-index.md`), `.claude` (mapped from package `.agent/`) symlinks into worktrees; idempotent, receipted (`.history/_init_receipt.md`). `--check-only` runs the floor check with no writes (and previews the gitignore/index changes). Migrates the old blanket `.history/` ignore on re-run. See `ADOPT.md` §3 for the init contract. | receipt file |
 | `api` | Manual-test driver: project auth scaffold from `api-config.env`, request logging to the task evidence file | task evidence file |
 | `evidence` | Evidence appender for calls made outside `api`: `evidence.sh <slug> log '<heading>' '<req-body>' ['<session>']` with the raw response on stdin; `note`/`show` subcommands | task evidence file |
 | `selftest` | Gate self-test: builds throwaway fixtures, proves every mechanical gate can fail AND pass (anchor gate per-anchor, ledger parsers per generation). `SELFTEST-PASS` or exit 1. Run it after any gate change and before adopting a package update. | throwaway `_selftest/` dir (cleaned) |
 
-`api.sh`, `evidence.sh` and `server.sh` read `.history/_bin/api-config.env` — the control plane instantiates it
-at init from `.history/_templates/api-config.template.env` (fills the
-project's base URL, accounts, session header, request envelope, auth
-endpoints/bodies, boot command and server marker) and keeps it adapted during work. Without it, `api.sh` and `server.sh`
+`api.sh`, `evidence.sh` and `server.sh` read `.history/_bin/api-config.env` — see `ADOPT.md` §3 step 6 for the conditional fill (only if the project uses `api.sh`). Without it, `api.sh` and `server.sh`
 refuse with instructions instead of guessing. The scripts themselves are
 project-neutral: auth-flow/base/envelope changes go in the config, never in
 the scripts — the script paths stay allowlisted while the project adaptation
@@ -38,11 +36,13 @@ lives in one gitignored file.
 
 ## Polling and notifications
 
-Register a durable wake for the plane's `plane-poll` and each worker's `tick`,
+Register a durable wake for the plane's runner and each worker's `tick`,
 starting at `HOT_RATE` (3 minutes). One fixed invocation handles each role.
 Inbox rows and claim changes arrive on the next poll; no live-session message
-channel is required. The plane poll refreshes `plane.lock`. Its diff portion
-is silent when unchanged; due time-based scans print their findings.
+channel is required. The runner refreshes `plane.lock`. Its diff portion
+is silent when unchanged; due time-based scans print their findings. The
+runner runs at a fixed 3-min period; the poll-rate ladder below governs the
+worker's own wake cadence.
 
 **Poll-rate ladder.** Polls run at `HOT_RATE` (default 3 min) while diffs
 change. After `BACKOFF_AFTER` (default 10) consecutive empty polls, cadence
@@ -60,21 +60,17 @@ wall-clock and unaffected: `STALE_AFTER`=30 min, `RELAY_STALE`=30 min,
 lock up to IDLE_CAP old). Env overrides: `BACKOFF_AFTER`, `HOT_RATE`,
 `WATCH_RATE`, `IDLE_CAP`, `LOCK_STALE`.
 
-The diff probe cannot detect elapsed time. `plane-poll` runs `stale` at boot
+The diff probe cannot detect elapsed time. The runner runs `stale` at boot
 and every `STALE_AFTER` (30 minutes), and `relays` at boot and every
-`RELAY_STALE` (30 minutes). Use `plane-poll --stale-now` before a conflicting
+`RELAY_STALE` (30 minutes). Use `runner.sh --stale-now` before a conflicting
 grant. Scans are read-only; the plane verifies candidates before changing
 claim or relay state. Scan intervals can be tuned with `STALE_SCAN_EVERY` and
 `RELAY_SCAN_EVERY` (seconds).
 
-Lock acquisition, status, explicit heartbeat and release remain available
-through the separate `lock` command (`lock.sh heartbeat` on Linux/macOS;
-`lock.ps1 heartbeat` on Windows).
-
 ## Platforms and allowlisting
 
 - **linux/** — bash, GNU stat/find. Reference implementation.
-- **mac/** — bash, BSD `stat -f`, no `/proc` (lock holder check is best-effort `ps`).
+- **mac/** — bash, BSD `stat -f`, no `/proc` (lock holder check via `lsof -p`).
 - **windows/** — PowerShell 5+. Run: `powershell -File .history\_bin\windows\<script>.ps1`.
 
 Allowlist exact script paths (no wildcards). On Windows allowlist the
