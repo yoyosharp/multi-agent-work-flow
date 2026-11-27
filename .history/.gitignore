@@ -1,0 +1,9 @@
+# Installed workflow files under .history/ are machine-local — except the
+# shared API index. `/*` alone would ignore the `_shared/` directory
+# itself, so git would never descend into it and the re-include in
+# `_shared/.gitignore` (`!api-index.md`) would never fire. `!_shared/`
+# keeps the directory visible; `_shared/.gitignore` then ignores
+# everything in it except api-index.md, which is the one file under
+# .history/ that must be committable (cross-machine sharing, eval 25).
+/*
+!_shared/

@@ -1,4 +1,4 @@
-# Set-up v6.5 — anchors-based control-plane / parallel-agents workflow
+# Set-up v6.6 — anchors-based control-plane / parallel-agents workflow
 
 **Self-contained**: everything needed ships inside this folder, whatever it
 is named. Get the template from where the user says (a URL → clone; a
@@ -6,11 +6,16 @@ local path → copy) and adopt it into any project root — no external
 references. `AGENTS.md` is the Codex entrypoint; `.agent/` is the package agent-config dir
 (mapped to `.claude/` on Claude Code) and optional Claude Code integration.
 
+**License**: PolyForm Noncommercial License 1.0.0 — see `LICENSE`. Free to
+use, study, and modify for any noncommercial purpose; commercial use
+requires a separate license from the copyright holder.
+
 ```
 git clone <WORKFLOW_REPO_URL> .workflow   # URL → nested clone (ignored via /.workflow/ in .gitignore, never committed)
 # or: cp -r <local-template>/. <target-project>/   # local path → copy
 ```
 
+**What makes this v6.6**: polling is the general mechanism and the runner is a situational protocol (the v6.5 runner-centric framing is superseded). The general polling (`plane-poll`, every 30 min) detects changes with `tick --diff` and records every wake notice in the durable notice file (`.history/_runner-notices.md`), which the agent reads on activation; the push wake is `codex queue` on Codex and tmux send-keys on Claude, and a `UserPromptSubmit` hook gates the Claude scheduled wake so a noop tick costs 0 tokens. The helper's allowlist is domain-shaped (it can write any file belonging to the workflow install, never project/task files), and the helper applies the guards at the end of adoption. ADOPT.md gains harness-specific sections (Codex / Claude Code; Linux / Windows). The poll-rate ladder stays as a backup/failsafe, not the primary cost control.
 **What makes this v6.5**: the plan gate (a fourth gate file, `plan.md`, with mutual agreement between plane and worker — plane CLEAN for a rev plus the worker's rev-cited acceptance), the periodic runner (one 3-min cycle replacing the watcher + poll backstop), and the audit consolidation (a 45-item core spec, one shared claim-row parser, buried rules promoted into the checklists that execute them).
 **What makes this v6**: binding lives in behavioral anchors with mechanical
 evidence (`docs/workflow/anchors.md` + the `closecheck anchors` gate), not
@@ -46,7 +51,7 @@ line-count check enforces the cap.
     loads these; nothing here assumes Claude Code.
 - **`.history/_templates/`** — scaffold seeds (task index, workers ledger,
   brief, worklog, Q&A, review gate, plan gate, intake doc) plus `api-config.template.env` — the
-  project API scaffold template (see `ADOPT.md` §3 step 6 for the
+  project API scaffold template (see `ADOPT.md` §3 step 7 for the
   conditional fill). The brief
   template carries the `binding: anchors B1–B6` line. Task-dir files are
   copied from these; templates always install with clean, example-free
@@ -114,7 +119,7 @@ line-count check enforces the cap.
    `.agent/` entirely on non-Claude harnesses (or replace it with your
    harness's trigger layer pointing at `docs/workflow/*-instructions.md`;
    the pre-test-review skill body then travels as plain brief text).
-   On adoption, fill the per-project parameters (`ADOPT.md` §3 step 8:
+   On adoption, fill the per-project parameters (`ADOPT.md` §3 step 9:
    the hook's intranet allowlist and `<PROJECT_REVIEW_CHECKLIST>`).
    **Re-install over an existing install (upgrade)**: don't blind-copy —
    see `ADOPT.md` §4 for the migration procedure (port, never blind-copy;
@@ -155,17 +160,23 @@ line-count check enforces the cap.
    mode twice without changing
    artifacts: the second run should print nothing. Then boot a worker with
    no slug — expect the pick list. See `ADOPT.md` §9 for the full
-   verification checklist. The plane wake is the periodic runner:
-   register it (cron / Task Scheduler, every 3 min — `runner.sh install`);
-   the runner runs the diff probe, the overdue check, and stale/relay
-   scans when due, and regenerates the board when the diff is non-empty
-   (worker `tick` still runs at `HOT_RATE` (3 min) and ladders down
-   automatically — see `_bin/README.md`); sessions re-register their wakes
-   on `POLL-RATE` transitions. Without a scheduler, checks require
-   manual session resumes. Run the plane session itself inside tmux
+   verification checklist. The plane wake is the general polling:
+   register it (cron / Task Scheduler, every 30 min —
+   `plane-poll.sh install` / `plane-poll.ps1`); the poll runs the diff
+   probe, the overdue check, and stale/relay scans when due, writes
+   every wake notice to the durable notice file
+   (`.history/_runner-notices.md`), and regenerates the board when the
+   diff is non-empty; the agent reads the notice file on activation.
+   The periodic runner is a situational protocol, not the default:
+   install it (cron / Task Scheduler, every 3 min — `runner.sh
+   install`) only when the situation supports a push wake (a tmux pane
+   is registered, or a working harness CLI resume — `codex queue` on
+   Codex); where no push is supported there is no runner, and polling
+   carries the workflow. Without a scheduler, checks require manual
+   session resumes. If you do run the plane session inside tmux
    (`tmux new -s plane`, run the agent, `Ctrl-b d` to detach,
-   `tmux attach -t plane` to reattach) — the runner's wake needs a
-   tmux pane to type into. Keep the session behaving like a normal
+   `tmux attach -t plane` to reattach), the runner's wake can type into
+   the pane. Keep the session behaving like a normal
    terminal: in `~/.tmux.conf`, set `set -g mouse on` (the wheel then
    scrolls scrollback instead of reaching the agent as input) and
    `set -g history-limit 50000` (the 2000-line default loses a long

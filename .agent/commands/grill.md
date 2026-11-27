@@ -11,7 +11,8 @@ Argument: `$ARGUMENTS` — the rough idea to scope.
 ## 0. Declare your role
 
 Declare the scoper role first: run
-`bash .history/_bin/<platform>/declare-role.sh scoper` (no slug).
+`bash .history/_bin/<platform>/declare-role.sh scoper` (no slug) — on
+Windows, `powershell -File .history\_bin\windows\declare-role.ps1 scoper`.
 The hook reads the registry from it — no env var, no relaunch; run
 this command from anywhere. Without the declaration the hook derives
 you as plane (project-root cwd) and you could write anywhere under

@@ -6,7 +6,9 @@ granted write token. Your claim row and task artifacts are authoritative.
 **Boot order (mandatory)**: read [anchors](anchors.md) IN FULL first — they are binding and
 override habit — then [claim and conflict rules](parallel-agents.md), [poll/inbox
 rules](async-inputs.md), your brief, the worklog tail (last 40 lines), and your claim
-row. Phase reports follow [reporting instructions](reporting-instructions.md).
+row. On activation, read `.history/_runner-notices.md` FIRST — act on pending
+notices for your role (`role=worker:<slug>`), then mark handled ones `- [x]`.
+Phase reports follow [reporting instructions](reporting-instructions.md).
 
 **Skills are guidance, not law.** What binds is the anchor evidence: B1–B3
 checks read your CLOSE entry, not your method. Use skills when they fit; skip
@@ -19,7 +21,7 @@ conflicting writers. **How:**
 
 - No slug: read `.history/TASK_LIST.md`; list PLANNED/IN_PROGRESS tasks with no non-terminal
   claim (DECLARED, GRANTED, EXECUTING, STALE, CHALLENGED); ask the human to choose, then stop.
-- With slug: declare your role first — `bash .history/_bin/<platform>/declare-role.sh worker <slug> [label]` (label defaults to the task short — the slug minus its `YYYY-MM-DD-` prefix; the plane names you by label) — then `cd` to the worktree `.worktree/<slug>/` (edits/builds/tests target the task branch). Require `.history/<slug>/brief*.md`, else report valid slugs and
+- With slug: declare your role first — `bash .history/_bin/<platform>/declare-role.sh worker <slug> [label]` (on Windows, `powershell -File .history\_bin\windows\declare-role.ps1 worker <slug> [label]`) (label defaults to the task short — the slug minus its `YYYY-MM-DD-` prefix; the plane names you by label) — then `cd` to the worktree `.worktree/<slug>/` (edits/builds/tests target the task branch). Require `.history/<slug>/brief*.md`, else report valid slugs and
   stop. Seed the task dir with `scaffold.sh <slug>` (copies workers.md/qa.md/worklog.md/inbox.md/plan.md from `.history/_templates/`).
 - Append your DECLARED row: identity, phase, method, commitment, write domain, resource
   tokens, time, notes (`host:pid` best effort, informational). Method = your harness's

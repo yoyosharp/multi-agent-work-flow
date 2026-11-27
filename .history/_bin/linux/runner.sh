@@ -1,19 +1,28 @@
 #!/usr/bin/env bash
-# runner.sh — the workflow clock (v6.5). One cycle, then exit; the
+# runner.sh — the SITUATIONAL fast cycle (v6.6). One cycle, then exit; the
 # scheduler (cron / Task Scheduler, every 3 min) is the loop.
-# Replaces plane-watch.sh + plane-poll.sh (both deleted in v6.5).
+# The runner is a situational protocol, NOT the default: install it only
+# when the situation supports a push wake (a tmux pane is registered, or a
+# working harness CLI resume). The GENERAL mechanism is the polling
+# (plane-poll.sh, every 30 min) — it is always installed, on every
+# platform and harness. The runner adds a faster cycle and prompt delivery
+# on top of the polling where a push is supported. It replaces
+# plane-watch.sh (deleted in v6.5); plane-poll.sh was restored in v6.6.
 # One cycle:
 #   1. tick --plane --diff (hard-fails on an unresolvable slug) → on a
-#      non-empty diff, wake the plane via tmux (workers by role if it
-#      concerns them) and regenerate the board.
+#      non-empty diff, append a notice (kind=diff, summary AND content)
+#      to .history/_runner-notices.md, wake the plane via its owning
+#      harness (codex queue on Codex, tmux on Claude), and regenerate
+#      the board.
 #   2. Worker wakes: per-task inbox.md changes against snapshots wake a
 #      WAITING worker's registered pane — inbox changes only, one wake
 #      per slug per cycle, never on the wake text alone (the worker still
-#      runs tick --diff and reads inbox.md itself).
+#      runs tick --diff and reads inbox.md itself). Each worker wake is
+#      a notice (kind=worker-wake) + a harness wake.
 #   3. Overdue check — WAITING/BLOCKED rows older than STALE_AFTER, oldest
-#      first → wake the plane with an overdue notice. This is what catches
-#      a dead plan-review / §3.1 / test-result-review sub-agent: its
-#      WAITING row ages with no verdict (the spawn-and-watch rule,
+#      first → a notice (kind=overdue) + a harness wake. This is what
+#      catches a dead plan-review / §3.1 / test-result-review sub-agent:
+#      its WAITING row ages with no verdict (the spawn-and-watch rule,
 #      control-plane-pm.md §2 — the spawner re-dispatches once, then
 #      escalates). It also enforces B-5 (BLOCKED rows answered within one
 #      poll cycle).
@@ -56,10 +65,11 @@ set -u
 cd "$(dirname "$0")/../../.." || exit 1
 ROOT="$(pwd -P)"
 BIN="$(cd "$(dirname "$0")" && pwd -P)"
-# Shared claim-row parser (v6.5, L-C4) + shared wake helper — sourced
-# before any parsing or waking.
+# Shared claim-row parser (v6.5, L-C4) + shared wake helper + notice helper
+# — sourced before any parsing or waking.
 . "$BIN/claim-rows.sh" 2>/dev/null || { echo "claim-rows.sh missing under $BIN — reinstall the package" >&2; exit 1; }
 . "$BIN/wake.sh" 2>/dev/null || { echo "wake.sh missing under $BIN — reinstall the package" >&2; exit 1; }
+. "$BIN/notices.sh" 2>/dev/null || { echo "notices.sh missing under $BIN — reinstall the package" >&2; exit 1; }
 
 STATE_DIR="$ROOT/.history/._runner_state"
 STATE="$STATE_DIR/state"
@@ -84,11 +94,11 @@ sha_file() { # sha_file <path> — portable sha256 (linux sha256sum, mac shasum)
   else shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1; fi
 }
 
-wake_plane() { # wake_plane <message> — type one wake line into the plane pane, if safe
-  local pane
-  pane="$(cat "$ROOT/.history/._plane_pane" 2>/dev/null | tr -d '[:space:]')"
-  if [ -z "$pane" ]; then log "no plane pane registered — backstop only"; return 1; fi
-  send_wake "$pane" "$1" "plane"
+wake_plane() { # wake_plane <message> — wake the plane via its owning harness, if safe
+  # The harness adapter (wake.sh harness_wake) tries `codex queue` on
+  # Codex (session ID from .history/._plane_session) and falls back to
+  # tmux send-keys on Claude (pane from .history/._plane_pane).
+  harness_wake "plane" "" "$1"
 }
 
 worker_waiting() { # worker_waiting <task-dir> — 0 if the worker waits for input
@@ -116,9 +126,10 @@ check_worker_wakes() { # check_worker_wakes — inbox change + waiting worker
     [ "$(cat "$snap")" = "$cur" ] && continue
     printf '%s\n' "$cur" > "$snap"
     worker_waiting "$d" || { log "inbox changed for $slug but worker is not waiting — no wake"; continue; }
-    pane="$(head -1 "$ROOT/.history/._worker_panes/$short" 2>/dev/null | tr -d '[:space:]')"
-    if [ -z "$pane" ]; then log "inbox changed for waiting worker $slug but no pane registered — polling only"; continue; fi
-    send_wake "$pane" "worker-wake: inbox changed for $short" "worker $slug"
+    # The notice is the durable record (added even if no wake can be sent);
+    # the harness adapter tries `codex queue` (session ID) then tmux (pane).
+    notice_add "worker $slug" "worker-wake" "worker-wake: inbox changed for $short"
+    harness_wake "worker" "$slug" "worker-wake: inbox changed for $short"
   done
 }
 
@@ -139,7 +150,8 @@ check_and_wake() { # check_and_wake — diff-gated wake (the runner's only diff 
   state_put last_check "$(date '+%F %T')"
   if [ "$rc" -ne 0 ]; then log "tick --plane --diff failed (rc=$rc): $tick_out"; return 1; fi
   if [ -z "$out" ]; then log "empty diff — no wake"; return 0; fi
-  log "non-empty diff — waking plane: $(printf '%s' "$out" | head -1)"
+  log "non-empty diff — notice + wake: $(printf '%s' "$out" | head -1)"
+  notice_add "plane" "diff" "plane-wake: .history changed" "$out"
   wake_plane "plane-wake: .history changed"
   regen_board
   return 0
@@ -180,6 +192,7 @@ check_overdue() { # check_overdue — WAITING/BLOCKED rows older than STALE_AFTE
   done
   [ "$count" -eq 0 ] && { log "overdue check: none"; return 0; }
   log "overdue check: $count overdue — oldest: $oldest_msg"
+  notice_add "plane" "overdue" "runner-overdue: $oldest_msg ($count overdue)"
   wake_plane "runner-overdue: $oldest_msg ($count overdue)"
   return 0
 }
@@ -195,6 +208,11 @@ runner_install() {
   (crontab -l 2>/dev/null; printf '%s\n' "$line") | crontab - \
     && echo "runner: scheduled every 3 min (cron)" \
     || { echo "runner: crontab install failed" >&2; return 1; }
+  # TMUX_BIN fix (v6.6): resolve tmux once, while this shell's PATH is full
+  # (cron's PATH is minimal and may not find it); wake.sh prefers the
+  # stored absolute path at runtime.
+  mkdir -p "$STATE_DIR"
+  if command -v tmux >/dev/null 2>&1; then command -v tmux > "$STATE_DIR/tmux_bin"; fi
 }
 runner_uninstall() {
   command -v crontab >/dev/null 2>&1 || { echo "runner: crontab not found — nothing to remove" >&2; return 1; }

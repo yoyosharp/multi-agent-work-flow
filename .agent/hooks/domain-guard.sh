@@ -35,18 +35,29 @@
 #      scoper — only under .history/_pending/ (intake docs); nothing else
 #               in-repo. A scoper in the project root would otherwise
 #               derive as plane and could write anywhere under .history/.
-#      helper — an in-repo ALLOWLIST, fail-closed (fix memory, scripts,
-#               debugging, local settings — never plan/code/evidence):
-#               .history/_bin/ scripts only (*.sh/*.ps1 — api-config.env
-#               is plane-owned config, not a script), 0.scratch/**,
-#               basename MEMORY.md or project_*.md anywhere in-repo,
-#               basename *.local.json (local settings overrides).
+#      helper — the WORKFLOW INSTALL, fail-closed, domain-shaped
+#               (v6.6 §48): docs/workflow/, .history/_bin/ scripts only
+#               (*.sh/*.ps1 — api-config.env is plane-owned project
+#               config, not a workflow file), .history/_templates/,
+#               .agent/ + .claude/ + .agents/ + .codex/ (the guard files
+#               are already denied by rule 1 for every role:
+#               .agent/settings.json, .claude/settings.json,
+#               .codex/hooks.json, .agent/hooks/*, .claude/hooks/*),
+#               0.scratch/**, basename MEMORY.md or project_*.md
+#               anywhere in-repo, basename *.local.json (local settings
+#               overrides). The keys.md / adoption-record.md exact-file
+#               carve-outs are subsumed (they are workflow files,
+#               covered by docs/workflow/). The deny on project/task
+#               files (code, evidence, plan, the project's own config
+#               like CLAUDE.md) is absolute.
 #               Out-of-repo paths are already allowed before this rule
 #               (v6.1 early-allow) — that is how a helper writes its own
 #               memory under ~/.claude/projects/.
-#               The shared .claude/settings.json (and .agent/settings.json)
-#               stays blocked for every role by rule 1; only *.local.json
-#               files are helper-editable.
+#               The allowlist is about WRITES (v6.6 §51 refinement):
+#               reads are unrestricted (except rule 1 secrets) — the
+#               helper reads plan, code, evidence, docs, and harness
+#               config freely to debug, and runs read-only diagnostics;
+#               it just cannot edit project/task files.
 #   4. Claim-row domain (worker only, best effort): when the claim row's
 #      Write domain cell contains path tokens (e.g. `src/test/**`), a code
 #      write must also sit under one of them. Free-text domains with no
@@ -369,7 +380,7 @@ if [ -n "$FPATH" ]; then
     esac
     case "$TOOL" in Edit|Write)
       case "$APATH" in
-        "$ROOT"/.agent/settings.json|"$ROOT"/.claude/settings.json|"$ROOT"/.agent/hooks/*|"$ROOT"/.claude/hooks/*)
+        "$ROOT"/.agent/settings.json|"$ROOT"/.claude/settings.json|"$ROOT"/.codex/hooks.json|"$ROOT"/.agent/hooks/*|"$ROOT"/.claude/hooks/*)
           deny "workflow guard files are not editable by agents: $FPATH" ;;
       esac
       ;;
@@ -499,13 +510,34 @@ if [ "$TOOL" = "Edit" ] || [ "$TOOL" = "Write" ]; then
   elif [ "$ROLE" = "scoper" ]; then
     under "$APATH" "$ROOT/.history/_pending" || deny "scoper may write only under .history/_pending/: $FPATH"
   elif [ "$ROLE" = "helper" ]; then
-    # Helper allowlist, fail-closed: _bin/ SCRIPTS only (*.sh/*.ps1 —
-    # api-config.env is plane-owned config, not a script) + 0.scratch/ +
-    # memory files + local settings files + the key map
-    # (docs/workflow/keys.md — the helper alone decides key promotion).
-    # Everything else in-repo denied.
-    if [ "$APATH" = "$ROOT/docs/workflow/keys.md" ]; then
-      : # allowed — the key map
+    # Helper allowlist, fail-closed, DOMAIN-SHAPED (v6.6 §48): the helper
+    # may write to any file belonging to the workflow install —
+    # docs/workflow/, _bin/ scripts, _templates/, .agent/, .claude/,
+    # .agents/, .codex/, 0.scratch/, memory files, local settings — but
+    # NEVER to project/task files (code, evidence, plan, the project's
+    # own config like CLAUDE.md). The deny on plan/code/evidence is
+    # absolute. The keys.md / adoption-record.md exact-file carve-outs
+    # are subsumed (they are workflow files, covered by docs/workflow/).
+    # Rule 1 already denied the guard files (.agent/settings.json,
+    # .claude/settings.json, .codex/hooks.json, .agent/hooks/*,
+    # .claude/hooks/*) for every role before this rule runs, so the
+    # .agent/ / .claude/ / .codex/ prefixes below cover only the
+    # non-guard files (commands, skills, config, rules). _bin/ is
+    # scripts only (*.sh/*.ps1) — api-config.env is plane-owned project
+    # config, not a workflow file.
+    if under "$APATH" "$ROOT/docs/workflow"; then
+      : # allowed — the workflow's instruction files
+    elif under "$APATH" "$ROOT/.history/_templates"; then
+      : # allowed — the workflow's templates
+    elif under "$APATH" "$ROOT/.agent"; then
+      : # allowed — commands/skills (rule 1 denied settings.json + hooks/*)
+    elif under "$APATH" "$ROOT/.claude"; then
+      : # allowed — the installed commands/skills (rule 1 denied settings.json + hooks/*)
+    elif under "$APATH" "$ROOT/.agents"; then
+      : # allowed — the generated Codex mirror (the drift gate, not the
+      # hook, enforces "edit the canonical .agent/ files, never hand-edit .agents/")
+    elif under "$APATH" "$ROOT/.codex"; then
+      : # allowed — the Codex install (rule 1 denied hooks.json)
     elif under "$APATH" "$ROOT/0.scratch"; then
       : # allowed (debugging/scratch)
     elif under "$APATH" "$ROOT/.history/_bin"; then
@@ -516,7 +548,7 @@ if [ "$TOOL" = "Edit" ] || [ "$TOOL" = "Write" ]; then
     else
       case "$(basename "$APATH")" in
         MEMORY.md|project_*.md|*.local.json) : ;;
-        *) deny "helper may edit only _bin/ scripts, 0.scratch/, memory files (MEMORY.md, project_*.md), *.local.json, and docs/workflow/keys.md: $FPATH" ;;
+        *) deny "helper may write only to the workflow install (docs/workflow/, _bin/ scripts, _templates/, .agent/, .claude/, .agents/, .codex/, 0.scratch/, MEMORY.md, project_*.md, *.local.json) — never to project/task files (code, evidence, plan, CLAUDE.md): $FPATH" ;;
       esac
     fi
   else

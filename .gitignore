@@ -1,0 +1,5 @@
+# Workflow template — the .workflow/ nested clone is never committed into
+# the project repo (ADOPT.md §0). The per-directory .gitignore files under
+# .agent/, .agents/, .codex/, .history/ and docs/workflow/ keep the
+# installed workflow files machine-local.
+/.workflow/

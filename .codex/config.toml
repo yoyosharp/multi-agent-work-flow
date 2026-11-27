@@ -1,0 +1,16 @@
+# Generic scaffold — fill in the project values at adoption (ADOPT.md §3
+# step 6). This file is machine config, not package content: it is written
+# for this project with the project's own path, then the human restarts
+# Codex. The legacy Windows "elevated" sandbox ignores a profile override,
+# so `prefer_mxc` is required; `workspace-write` alone does not fix git.
+default_permissions = "<project>-git"
+
+[features]
+prefer_mxc = true
+
+[permissions.<project>-git]
+description = "Workspace sandbox plus .git metadata write"
+extends = ":workspace"
+
+[permissions.<project>-git.filesystem]
+"<project-path>/.git" = "write"

@@ -1,4 +1,4 @@
-﻿# declare-role.ps1 — declare this session's workflow role to the hook registry.
+# declare-role.ps1 - declare this session's workflow role to the hook registry.
 # Windows mirror of declare-role.sh (same usage, same registry format).
 # Usage: powershell -File .history\_bin\windows\declare-role.ps1 -Role <role> [-Slug <slug>] [-Label <label>]
 #   role: plane|worker|scoper|helper; slug required for worker only.
@@ -8,27 +8,40 @@
 #     (exact .history\<slug> first, then .history\*-<slug>); zero
 #     matches or ambiguous → refused.
 #
-# Writes .history\_sessions\<agent-pid> (`role=<role>` and, for worker,
-# `slug=<slug>` and, when given, `label=<label>`). The hook (domain-guard.sh, bash-only) reads that
-# file first — registry beats the WORKFLOW_ROLE env var and the cwd
-# derivation — so no launch-time env var or cd is needed: run the command
+# Writes .history\_sessions\<agent-pid> (two lines: `role=<role>` and, for
+# worker, `slug=<slug>` and, when given, `label=<label>`). The hook reads
+# that file first - registry beats the WORKFLOW_ROLE env var and the cwd
+# derivation - so no launch-time env var or cd is needed: run the command
 # (/worker, /control-plane, /grill, /helper) from anywhere and it declares
 # the role itself. The registry is per-session: <agent-pid> is the agent
-# CLI process pid, found by walking up the parent chain with
-# Get-CimInstance Win32_Process until the process name matches the agent
-# binary (`claude`). DECLARE_ROLE_PID (env var) overrides the walk-up
-# (selftest only). This script writes ONLY its own pid's file — never
-# another session's. A session that needs a different role re-runs this
-# script (the file is overwritten). Stale entries (dead pid, or a pid
-# whose process is no longer the agent CLI) are ignored by the hook,
-# never deleted by it.
+# CLI process pid, found by walking up the parent chain until the process
+# image name matches the agent binary. DECLARE_ROLE_PID (env var) overrides
+# the walk-up (selftest only). This script writes ONLY its own pid's file -
+# never another session's. A session that needs a different role re-runs
+# this script (the file is overwritten). Stale entries (dead pid, or a pid
+# whose process is no longer the agent CLI) are ignored by the hook, never
+# deleted by it.
 #
-# Known limit: the hook does not run on Windows (bash-only), so this file
-# is the Windows side of the registry only — the enforcement it feeds
-# lives on linux/mac. Shell-redirection writes are not intercepted by the
-# hook — a session that deliberately writes a registry file by hand could
-# forge another session's entry. The registry is a guardrail + audit
-# signal, not a sandbox (same limit as the hook's other rules).
+# Agent images are matched by EXACT name, never a substring: the Codex CLI
+# spawns `codex-command-runner-*.exe` between the shell and itself, and a
+# wrapper whose name merely contains `codex`/`claude` must not be
+# registered (v6.3 live finding, 2026-11-19).
+#   claude(.exe) - Claude Code
+#   codex(.exe)  - Codex CLI
+#
+# Windows has no /proc, and Win32_Process (CIM/WMI) is denied under the
+# Codex sandbox - CIM is denied ("Access denied"), so the parent walk
+# read nothing and the role could never be declared. The parent chain is
+# read from a Toolhelp32 snapshot (kernel32) instead: no WMI/CIM
+# dependency, works both in and out of the sandbox.
+#
+# The registry feeds the bash hook on linux/mac AND the Codex guard
+# (.agent/hooks/domain-guard.ps1) on Windows, which reads it first
+# (HOOK_AGENT_PID override, per-session carve-out). Shell-redirection
+# writes are not intercepted by the hook - a session that deliberately
+# writes a registry file by hand could forge another session's entry.
+# The registry is a guardrail + audit signal, not a sandbox (same limit
+# as the hook's other rules).
 param([string]$Role = "", [string]$Slug = "", [string]$Label = "")
 $ErrorActionPreference = 'Stop'
 
@@ -62,27 +75,78 @@ if (($Role -eq 'worker') -and ($Slug -ne "")) {
   }
 }
 
-# Find the agent CLI pid: DECLARE_ROLE_PID overrides (selftest); else walk
-# the parent chain from this PowerShell process until a process name
-# matches the agent binary.
-$AgentPid = $null
-if ($env:DECLARE_ROLE_PID) { $AgentPid = [int]$env:DECLARE_ROLE_PID }
-else {
-  $cur = $PID
-  while ($cur -gt 1) {
-    $me = Get-CimInstance Win32_Process -Filter "ProcessId=$cur" -ErrorAction SilentlyContinue
-    if (-not $me) { break }
-    $pp = $me.ParentProcessId
-    if (-not $pp -or $pp -le 1) { break }
-    $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$pp" -ErrorAction SilentlyContinue
-    # exact image name, not a substring (a wrapper whose name merely contains
-    # 'claude' must not be registered — v6.3 live finding, 2026-11-19)
-    if ($parent -and ($parent.Name -match '^claude(\.exe)?$')) { $AgentPid = $pp; break }
-    $cur = $pp
+# Toolhelp32 bindings - the CIM-free process table (see the header).
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class WorkflowToolhelp {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct PROCESSENTRY32 {
+    public uint dwSize;
+    public uint cntUsage;
+    public uint th32ProcessID;
+    public IntPtr th32DefaultHeapID;
+    public uint th32ModuleID;
+    public uint cntThreads;
+    public uint th32ParentProcessID;
+    public int pcPriClassBase;
+    public uint dwFlags;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szExeFile;
   }
+  [DllImport("kernel32.dll", SetLastError = true)]
+  public static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern bool Process32FirstW(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern bool Process32NextW(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+  [DllImport("kernel32.dll", SetLastError = true)]
+  public static extern bool CloseHandle(IntPtr hObject);
 }
-if (-not $AgentPid) {
-  Write-Error "declare-role: no agent CLI process found (no ancestor process is the agent CLI) — are you running inside an agent session?"
+"@
+
+$AgentImagePattern = '^(claude|codex)(\.exe)?$'
+
+function Get-ProcessTable {
+  # pid -> @{ ParentProcessId; ImageName }, from one snapshot.
+  $snap = [WorkflowToolhelp]::CreateToolhelp32Snapshot(0x2, 0)
+  if ($snap -eq [IntPtr]::Zero -or $snap.ToInt64() -eq -1) { return @{} }
+  $table = @{}
+  try {
+    $entry = New-Object WorkflowToolhelp+PROCESSENTRY32
+    $entry.dwSize = [Runtime.InteropServices.Marshal]::SizeOf($entry)
+    if ([WorkflowToolhelp]::Process32FirstW($snap, [ref]$entry)) {
+      do {
+        $table[[int]$entry.th32ProcessID] = @{
+          ParentProcessId = [int]$entry.th32ParentProcessID
+          ImageName       = $entry.szExeFile
+        }
+      } while ([WorkflowToolhelp]::Process32NextW($snap, [ref]$entry))
+    }
+  } finally { [void][WorkflowToolhelp]::CloseHandle($snap) }
+  return $table
+}
+
+function Find-AgentPid([int]$StartPid, $ProcessTable) {
+  # Walk ancestors; a dead/reparented link ends the walk.
+  $cur = $StartPid
+  $hops = 0
+  while ($cur -gt 1 -and $ProcessTable.ContainsKey($cur) -and $hops -lt 256) {
+    $parent = $ProcessTable[$cur].ParentProcessId
+    if ($parent -le 0 -or -not $ProcessTable.ContainsKey($parent)) { break }
+    if ($ProcessTable[$parent].ImageName -match $AgentImagePattern) { return $parent }
+    $cur = $parent
+    $hops++
+  }
+  return 0
+}
+
+# Find the agent CLI pid: DECLARE_ROLE_PID overrides (selftest); else walk
+# the parent chain from this PowerShell process until an image name matches.
+$AgentPid = 0
+if ($env:DECLARE_ROLE_PID) { $AgentPid = [int]$env:DECLARE_ROLE_PID }
+else { $AgentPid = Find-AgentPid -StartPid $PID -ProcessTable (Get-ProcessTable) }
+if ($AgentPid -le 0) {
+  Write-Error "declare-role: no agent CLI process found (no ancestor process is claude/codex) - are you running inside an agent session?"
   exit 1
 }
 $sessionsDir = Join-Path $Root '.history\_sessions'

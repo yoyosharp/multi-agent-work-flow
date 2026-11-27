@@ -1,15 +1,22 @@
-﻿# runner.ps1 — the workflow clock (v6.5, Windows). One cycle, then exit;
+﻿# runner.ps1 — the SITUATIONAL fast cycle (v6.6, Windows). One cycle, then exit;
 # the scheduler (Task Scheduler, every 3 min) is the loop.
-# Replaces plane-poll.ps1 (deleted in v6.5). No watcher/tmux on Windows:
-# the cycle's output IS the signal — the plane session reads the scheduler
-# log on its next poll. One cycle:
+# The runner is a situational protocol, NOT the default: install it only
+# when the situation supports a push wake (a working harness CLI resume —
+# `codex queue` on Codex). The GENERAL mechanism is the polling
+# (plane-poll.ps1, every 30 min) — it is always installed. The runner adds
+# a faster cycle and prompt delivery on top of the polling where a push is
+# supported. No watcher/tmux on Windows: the cycle's output IS the signal —
+# the plane session reads the notice file (.history/_runner-notices.md) on
+# its next activation. One cycle:
 #   1. tick.ps1 -Plane -Diff (hard-fails on an unresolvable slug) → on a
-#      non-empty diff, print it (the plane reads it); no board on Windows
+#      non-empty diff, append a notice (kind=diff, summary AND content)
+#      to .history/_runner-notices.md and attempt the harness wake
+#      (codex queue on Codex); no board on Windows
 #      (board.sh is linux/mac only).
 #   2. Overdue check — WAITING/BLOCKED rows older than STALE_AFTER, oldest
-#      first → print an overdue notice. This is what catches a dead
-#      plan-review / §3.1 / test-result-review sub-agent: its WAITING row
-#      ages with no verdict (the spawn-and-watch rule,
+#      first → a notice (kind=overdue) + a harness wake. This is what
+#      catches a dead plan-review / §3.1 / test-result-review sub-agent:
+#      its WAITING row ages with no verdict (the spawn-and-watch rule,
 #      control-plane-pm.md §2 — the spawner re-dispatches once, then
 #      escalates). It also enforces B-5 (BLOCKED rows answered within one
 #      poll cycle).
@@ -30,6 +37,8 @@ $Root = (Get-Item '.').FullName
 $StateDir = '.history\._runner_state'
 $LogFile = '.history\_runner.log'
 $ScheduleDir = Join-Path $StateDir 'schedule'
+. (Join-Path $PSScriptRoot 'notices.ps1')
+. (Join-Path $PSScriptRoot 'wake.ps1')
 
 function Write-RunnerLog([string]$msg) {
   $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $msg"
@@ -106,7 +115,8 @@ $diffLines = ($tickOut -split "`n") | Where-Object { $_ -notmatch '^POLL-RATE' -
 if ($diffLines.Count -eq 0) { Write-RunnerLog "empty diff — no wake" }
 else {
   Write-RunnerLog "non-empty diff: $($diffLines[0])"
-  $tickOut
+  Add-Notice 'plane' 'diff' 'plane-wake: .history changed' $tickOut
+  Send-HarnessWake 'plane' '' 'plane-wake: .history changed' | Out-Null
 }
 
 # 2. overdue check — WAITING/BLOCKED rows older than STALE_AFTER, oldest first
@@ -139,7 +149,8 @@ foreach ($td in Get-ChildItem .history -Directory) {
 if ($overdueCount -eq 0) { Write-RunnerLog "overdue check: none" }
 else {
   Write-RunnerLog "overdue check: $overdueCount overdue — oldest: $oldestMsg"
-  "runner-overdue: $oldestMsg ($overdueCount overdue)"
+  Add-Notice 'plane' 'overdue' "runner-overdue: $oldestMsg ($overdueCount overdue)"
+  Send-HarnessWake 'plane' '' "runner-overdue: $oldestMsg ($overdueCount overdue)" | Out-Null
 }
 
 # 3. time-based scans when due

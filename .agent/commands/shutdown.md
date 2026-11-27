@@ -34,3 +34,11 @@ the human (those are the sessions they close or kill — the runner job is
 removed by shutdown.sh itself), and end your session. Do not improvise
 duties beyond that script; if the script refuses, surface its reason to
 the human.
+
+## Windows
+
+This install has no `shutdown.ps1` (`.history\_bin\windows\` ships no
+shutdown port). Do not fake it: tell the human the coordinated shutdown is
+unavailable on Windows and that they should close the plane and worker
+sessions by hand, then release `plane.lock` via
+`powershell -File .history\_bin\windows\lock.ps1 release`.

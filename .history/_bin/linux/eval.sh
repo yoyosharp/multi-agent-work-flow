@@ -596,14 +596,17 @@ hprobe() { # hprobe <file-path> <role> — hook exit code (0 allow, 2 deny)
   && [ "$(hprobe "$PROJ/MEMORY.md" helper)" = 0 ] \
   && [ "$(hprobe "$PROJ/0.scratch/debug.py" helper)" = 0 ] \
   && [ "$(hprobe "$PROJ/.claude/settings.local.json" helper)" = 0 ] \
-  && ok "37 helper allowlist: _bin, MEMORY.md, 0.scratch, *.local.json all allowed" \
+  && [ "$(hprobe "$PROJ/docs/workflow/keys.md" helper)" = 0 ] \
+  && [ "$(hprobe "$PROJ/.history/_templates/brief.template.md" helper)" = 0 ] \
+  && ok "37 helper allowlist: _bin, MEMORY.md, 0.scratch, *.local.json, docs/workflow/, _templates/ all allowed (§48)" \
   || bad "37 helper allowlist denied an allowed path"
-[ "$(hprobe "$PROJ/docs/workflow/control-plane-pm.md" helper)" = 2 ] \
+[ "$(hprobe "$PROJ/.history/2026-11-11-demo/plan.md" helper)" = 2 ] \
   && [ "$(hprobe "$PROJ/.history/TASK_LIST.md" helper)" = 2 ] \
   && [ "$(hprobe "$PROJ/.history/_shared/api-index.md" helper)" = 2 ] \
   && [ "$(hprobe "$PROJ/.history/_pending/2026-11-16-x-intake.md" helper)" = 2 ] \
   && [ "$(hprobe "$PROJ/.claude/settings.json" helper)" = 2 ] \
-  && ok "37b helper denylist: plan, TASK_LIST, api-index, _pending, shared settings.json all denied" \
+  && [ "$(hprobe "$PROJ/CLAUDE.md" helper)" = 2 ] \
+  && ok "37b helper denylist: task plan, TASK_LIST, api-index, _pending, shared settings.json, CLAUDE.md all denied (§48)" \
   || bad "37b helper denylist allowed a denied path"
 
 

@@ -7,8 +7,8 @@
 # is NEVER overwritten. Symlinks on Windows need Developer Mode or admin;
 # a failed symlink is FLAGGED with a manual step, not fatal.
 # Windows-native init. The Claude hook smoke test runs only with -Harness
-# claude and a working Bash runtime; Codex uses AGENTS.md and has no native
-# domain/process guard in this package.
+# claude and a working Bash runtime; Codex enforcement is the PowerShell
+# guard (.agent/hooks/domain-guard.ps1 via .codex/hooks.json PreToolUse).
 param([string]$Root = "", [switch]$CheckOnly,
   [ValidateSet("codex","claude")][string]$Harness = "codex")
 Set-StrictMode -Version 2.0
@@ -41,11 +41,45 @@ if ($tplOk -ne "") { "  ok: package templates present" }
 else { $hardFail = "package templates missing under $Root\.history\_templates (incomplete package copy)" }
 
 $pythonVersion = ""
+# Never trust Get-Command alone: a Store execution-alias stub resolves
+# but throws when invoked non-interactively, so verify by running it
+# and requiring a real `Python 3` version line (report C3).
 foreach ($pythonCommand in "python3","python") {
   if (-not (Get-Command $pythonCommand -ErrorAction SilentlyContinue)) { continue }
   try {
     $pythonOutput = & $pythonCommand --version 2>$null | Select-Object -First 1
-    if ($pythonOutput) { $pythonVersion = [string]$pythonOutput; break }
+    if ($pythonOutput -and ($pythonOutput -match 'Python 3')) { $pythonVersion = [string]$pythonOutput; break }
+  } catch { }
+}
+if ((-not $pythonVersion) -and (Get-Command py -ErrorAction SilentlyContinue)) {
+  # `py` launcher (ships with python.org installs, not the Store stubs).
+  foreach ($pyArg in @('-3','')) {
+    try {
+      if ($pyArg -eq '') { $pyOutput = & py --version 2>$null | Select-Object -First 1 }
+      else { $pyOutput = & py $pyArg --version 2>$null | Select-Object -First 1 }
+      if ($pyOutput -and ($pyOutput -match 'Python 3')) { $pythonVersion = [string]$pyOutput; break }
+    } catch { }
+  }
+}
+if (-not $pythonVersion) {
+  # Off-PATH installs: the per-user PythonCore layout
+  # %LOCALAPPDATA%\Python\pythoncore-<ver>-64\python.exe.
+  foreach ($cand in (Get-ChildItem "$env:LOCALAPPDATA\Python\pythoncore-*\python.exe" -ErrorAction SilentlyContinue)) {
+    try {
+      $candOutput = & $cand.FullName --version 2>$null | Select-Object -First 1
+      if ($candOutput -and ($candOutput -match 'Python 3')) { $pythonVersion = [string]$candOutput; break }
+    } catch { }
+  }
+}
+if (-not $pythonVersion) {
+  # `where.exe` can surface a real python the Get-Command path missed;
+  # skip WindowsApps entries (Store alias stubs, not a runtime).
+  try {
+    foreach ($w in (where.exe python 2>$null)) {
+      if ($w -like '*WindowsApps*') { continue }
+      $wOutput = & $w --version 2>$null | Select-Object -First 1
+      if ($wOutput -and ($wOutput -match 'Python 3')) { $pythonVersion = [string]$wOutput; break }
+    }
   } catch { }
 }
 if ($pythonVersion) { "  ok: $pythonVersion" }
@@ -63,8 +97,8 @@ if ($Harness -eq "claude") {
   "  ok: Codex AGENTS.md entrypoint present"
 } else { Add-Degraded "AGENTS.md Codex entrypoint missing — Codex will not load this workflow automatically" }
 if (Get-Command tmux -ErrorAction SilentlyContinue) { "  ok: tmux present (plane session host)" }
-else { Add-Degraded "tmux missing — no tmux wake path; the runner (Task Scheduler, every 3 min) is the wake" }
-Add-Degraded "no file-watcher tool on Windows — the periodic runner (Task Scheduler, every 3 min) is the wake; register it before declaring boot complete"
+else { Add-Degraded "tmux missing — no tmux push wake; the polling (Task Scheduler, every 30 min) is the wake" }
+Add-Degraded "no file-watcher tool on Windows — the polling (Task Scheduler, every 30 min) is the wake; register it before declaring boot complete"
 if (Test-Path "$Root\.history\_bin\windows\server.ps1") { "  ok: server.ps1 present (server lifecycle available)" }
 else { Add-Degraded "server.ps1 missing — server lifecycle (track F) unavailable" }
 if ((Test-Path "$Root\.history\_bin\windows\declare-role.ps1") -or (Test-Path (Join-Path $PSScriptRoot "declare-role.ps1"))) { "  ok: declare-role.ps1 present (session-declared roles available)" }
@@ -76,14 +110,30 @@ else { $hardFail = "declare-role.ps1 missing under $Root\.history\_bin\windows\ 
 $agentSrc = if (Test-Path "$Root\.agent") { "$Root\.agent" } else { "$Root\.claude" }
 $hook = "$agentSrc\hooks\domain-guard.sh"
 if ($Harness -eq "codex") {
-  Add-Degraded "Claude PreToolUse hook is not Codex enforcement; Codex domain/process gates are not included"
+  # Codex enforcement is the PowerShell guard via .codex/hooks.json
+  # (PreToolUse → domain-guard.ps1, JSON deny + exit 0). The hook is
+  # trust-gated: the human trusts it once in the TUI (/hooks).
+  $codexGuard = "$Root\.agent\hooks\domain-guard.ps1"
+  $codexHooks = "$Root\.codex\hooks.json"
+  if ((Test-Path $codexGuard) -and (Test-Path $codexHooks) -and
+      (Select-String -Path $codexGuard -Pattern 'permissionDecision' -Quiet) -and
+      (Select-String -Path $codexHooks -Pattern 'domain-guard.ps1' -Quiet) -and
+      (Select-String -Path $codexHooks -Pattern 'commandWindows' -Quiet)) {
+    "  ok: Codex guard wired (domain-guard.ps1 + .codex/hooks.json PreToolUse)"
+  } else {
+    Add-Degraded "Codex guard not wired — .agent/hooks/domain-guard.ps1 + .codex/hooks.json PreToolUse missing (Codex runs without domain/process enforcement until the adoption scaffolds them)"
+  }
 } elseif ((Test-Path $hook) -and (Select-String -Path "$agentSrc\settings.json" -Pattern "PreToolUse" -Quiet)) {
   if (Get-Command bash -ErrorAction SilentlyContinue) {
     $wt = "$Root\.worktree\__init_probe__"
-    $env:WORKFLOW_ROOT = $Root; $env:WORKFLOW_ROLE = "worker"; $env:WORKFLOW_SLUG = "__init_probe__"
+    # HOOK_AGENT_PID is a synthetic pid (no such process): it pins the hook to
+    # the registry lookup for that pid (which finds nothing, so the hook uses
+    # the WORKFLOW_ROLE/WORKFLOW_SLUG env vars below) instead of walking up
+    # from init's own parent process, which is not an agent session.
+    $env:HOOK_AGENT_PID = "4194304"; $env:WORKFLOW_ROOT = $Root; $env:WORKFLOW_ROLE = "worker"; $env:WORKFLOW_SLUG = "__init_probe__"
     '{"tool_name":"Edit","tool_input":{"file_path":"' + "$wt\src\X.java" + '"},"cwd":"' + $wt + '"}' | & bash $hook 2>$null; $rcIn = $LASTEXITCODE
     '{"tool_name":"Edit","tool_input":{"file_path":"' + "$Root\README.md" + '"},"cwd":"' + $Root + '"}' | & bash $hook 2>$null; $rcOut = $LASTEXITCODE
-    Remove-Item Env:\WORKFLOW_ROOT, Env:\WORKFLOW_ROLE, Env:\WORKFLOW_SLUG -ErrorAction SilentlyContinue
+    Remove-Item Env:\HOOK_AGENT_PID, Env:\WORKFLOW_ROOT, Env:\WORKFLOW_ROLE, Env:\WORKFLOW_SLUG -ErrorAction SilentlyContinue
     if (($rcIn -eq 0) -and ($rcOut -eq 2)) { "  ok: hook smoke test passed (allows in-domain, blocks out-of-domain)" }
     else { Add-Degraded "hook smoke test failed (in=$rcIn out=$rcOut) — hooks inert until fixed" }
   } else { Add-Degraded "hook smoke test skipped — no bash on this machine; verify the hook on a bash host" }
@@ -191,7 +241,11 @@ if ($mode -eq "fresh") {
   Add-Created ".history\TASK_LIST.md (from template — fill entries at first charter)"
 } else {
   Add-Kept ".history\TASK_LIST.md (existing — never overwritten)"
-  if (Select-String -Path "$Root\.history\TASK_LIST.md" -Pattern "<" -Quiet) { Add-Flagged "TASK_LIST.md still carries <...> placeholders — finish adoption by hand" }
+  # Tightened (v6.6): match only the literal `<...>` placeholder, not any
+  # bare `<`. The template's entry shape legitimately carries `<slug>`,
+  # `<STATUS>`, `<YYYY-MM-DD>` etc. (filled per-task at charter time, not
+  # at adoption) — matching any `<` flagged every adopted install.
+  if (Select-String -Path "$Root\.history\TASK_LIST.md" -Pattern "<\.\.\.>" -Quiet) { Add-Flagged "TASK_LIST.md still carries a literal <...> placeholder — finish adoption by hand" }
 }
 
 # --- 4. spec-pointer block -----------------------------------------------------

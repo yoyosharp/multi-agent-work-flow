@@ -15,9 +15,15 @@
 #      SHUTDOWN.md / ._watcher_stop would stop workers that just booted.
 #   3. Takes plane.lock via lock.sh. A live or unverifiable lock REFUSES —
 #      boot.sh never takes a lock over; the plane escalates to the human.
-#   4. Registers the runner's scheduled job (runner.sh install, idempotent)
-#      and registers the plane pane from $TMUX (the watcher used to do this
-#      at start; a cron-invoked runner has no $TMUX).
+#   4. Registers the polling's scheduled job (plane-poll.sh install,
+#      idempotent — the general mechanism, always installed) and, only
+#      when the situation supports a push wake (a tmux pane is registered
+#      or a working harness CLI is present), the runner's scheduled job
+#      (runner.sh install, idempotent — the situational fast cycle).
+#      Records the plane session (.history/._plane_session: harness +
+#      session ID, for the harness wake) and registers the plane pane
+#      from $TMUX (the watcher used to do this at start; a cron-invoked
+#      poll/runner has no $TMUX).
 #   5. Prints ONE summary: lock, runner state, and a sweep of the LIVE tasks
 #      only (status.sh, one call — it already loops every task). DONE /
 #      DELIVERED tasks are listed as counts, never expanded: they hold
@@ -104,16 +110,60 @@ lout="$(bash "$BIN/lock.sh" take 2>&1)"; lrc=$?
 echo "lock: $lout"
 [ "$lrc" -eq 0 ] || { echo "BOOT-REFUSED: plane.lock not taken (see above) — escalate to the human, do not retry" >&2; exit 2; }
 
-# 4. runner — register the scheduled job (idempotent) + register the plane
-# pane from $TMUX (the watcher used to do this at start; a cron-invoked
-# runner has no $TMUX). The runner is the workflow clock; it needs no
-# long-running process.
+# 4. poll (general, always) + runner (situational, only when a push wake
+# is supported) + session record + plane pane from $TMUX (the watcher used
+# to do this at start; a cron-invoked poll/runner has no $TMUX).
+# The poll is the general mechanism — it is always installed. The runner
+# is situational: install it only when a push wake is supported (a tmux
+# pane is registered, or a working harness CLI resume is present).
+pout="$(bash "$BIN/plane-poll.sh" install 2>&1)"; prc=$?
+echo "poll: $pout"
+[ "$prc" -ne 0 ] && echo "poll: scheduling failed — run plane-poll.sh by hand on a timer (the workflow still works, checks need manual resumes)"
 if [ "${RUNNER_DISABLE:-0}" = "1" ]; then
   echo "runner: disabled by RUNNER_DISABLE=1 — polling only"
-else
+elif command -v tmux >/dev/null 2>&1 || command -v codex >/dev/null 2>&1; then
   rout="$(bash "$BIN/runner.sh" install 2>&1)"; rrc=$?
   echo "runner: $rout"
-  [ "$rrc" -ne 0 ] && echo "runner: scheduling failed — run runner.sh by hand on a timer (the workflow still works, checks need manual resumes)"
+  [ "$rrc" -ne 0 ] && echo "runner: scheduling failed — the poll still runs (every 30 min); run runner.sh by hand on a timer for the fast cycle"
+else
+  echo "runner: not installed — no push wake supported here (no tmux, no codex CLI); the polling carries the workflow"
+fi
+# Session record (.history/._plane_session): harness + session ID, for the
+# harness wake (wake.sh harness_wake). The harness is detected from the
+# parent process chain (claude/codex) or $WORKFLOW_HARNESS; the session ID
+# comes from $WORKFLOW_SESSION_ID (the agent sets it when it knows its own
+# ID — e.g. the Codex thread UUID). If no session ID is recorded, the poll
+# still writes the notice; only the push wake is unavailable (the agent
+# reads the notice file on its next activation). The agent can record its
+# session ID by hand: printf 'harness=codex\nsession=<uuid>\n' >
+# .history/._plane_session
+harness="${WORKFLOW_HARNESS:-}"
+if [ -z "$harness" ]; then
+  _p="$$"
+  while [ -n "$_p" ] && [ "$_p" != "0" ] && [ "$_p" != "1" ]; do
+    _cmd="$(ps -o command= -p "$_p" 2>/dev/null | head -1)"
+    _first="$(printf '%s' "$_cmd" | awk '{print $1}')"
+    _base="$(basename "$_first" 2>/dev/null)"
+    case "$_base" in
+      claude|codex) harness="$_base"; break ;;
+      sh|bash|dash|zsh|node)
+        _arg1="$(printf '%s' "$_cmd" | awk '{print $2}')"
+        _a1base="$(basename "$_arg1" 2>/dev/null)"
+        case "$_a1base" in claude|codex) harness="$_a1base"; break ;; esac
+        ;;
+    esac
+    _p="$(ps -o ppid= -p "$_p" 2>/dev/null | tr -d ' ')"
+  done
+  harness="${harness:-unknown}"
+fi
+{
+  printf 'harness=%s\n' "$harness"
+  if [ -n "${WORKFLOW_SESSION_ID:-}" ]; then printf 'session=%s\n' "$WORKFLOW_SESSION_ID"; fi
+} > .history/._plane_session
+if [ -n "${WORKFLOW_SESSION_ID:-}" ]; then
+  echo "plane session recorded: harness=$harness (push wake available)"
+else
+  echo "plane session recorded: harness=$harness, no session ID — push wake unavailable until the agent records its session ID in .history/._plane_session (the notice file still carries every wake)"
 fi
 if command -v tmux >/dev/null 2>&1 && [ -n "${TMUX:-}" ]; then
   pane="$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_id}' 2>/dev/null || true)"
@@ -134,4 +184,4 @@ blocked="$(grep -E 'BLOCKED|WAITING' "$stmp" || true)"
 if [ -n "$blocked" ]; then echo "NEEDS-YOU (blocked / waiting):"; printf '%s\n' "$blocked" | sed 's/^/  /'; fi
 term="$(sed -n '/^== claims/,/^== declared/p' "$stmp" | grep -cE 'RELEASED' || true)"
 echo "released/terminal claim rows: ${term:-0} (not expanded — nothing to ratify)"
-echo "== boot done: ratify DECLARED claims, answer BLOCKED rows, verify the runner's scheduled job, then report"
+echo "== boot done: ratify DECLARED claims, answer BLOCKED rows, verify the poll's scheduled job (and the runner's, if installed), then report"

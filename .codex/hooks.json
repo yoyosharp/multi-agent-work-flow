@@ -1,0 +1,1 @@
+{"hooks":{"PreToolUse":[{"hooks":[{"command":"powershell -NoProfile -ExecutionPolicy Bypass -File \".agent/hooks/domain-guard.ps1\"","commandWindows":"powershell -NoProfile -ExecutionPolicy Bypass -File \".agent/hooks/domain-guard.ps1\"","timeout":30,"type":"command"}]}]}}

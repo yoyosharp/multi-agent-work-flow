@@ -203,9 +203,12 @@ wt="$hr/.worktree/demo"
 [ "$(hook helper "" "$(j_edit "$hr/.claude/settings.json" "$hr")")" = 2 ] \
   && ok "hook denies a helper write to the shared settings.json (rule 1)" \
   || bad "hook allowed a helper write to settings.json — the guard is open"
-[ "$(hook helper "" "$(j_edit "$hr/docs/workflow/control-plane-pm.md" "$hr")")" = 2 ] \
-  && ok "hook denies a helper write to the plan (docs/workflow/)" \
-  || bad "hook allowed a helper write to the plan"
+[ "$(hook helper "" "$(j_edit "$hr/docs/workflow/control-plane-pm.md" "$hr")")" = 0 ] \
+  && ok "hook allows a helper write to docs/workflow/ (the workflow's instruction files, §48)" \
+  || bad "hook blocked a helper write to docs/workflow/ — §48 domain rule unproven"
+[ "$(hook helper "" "$(j_edit "$hr/docs/workflow/adoption-record.md" "$hr")")" = 0 ] \
+  && ok "hook allows a helper write to docs/workflow/adoption-record.md (the keys.md carve-out is subsumed, §48)" \
+  || bad "hook blocked a helper write to adoption-record.md"
 [ "$(hook helper "" "$(j_edit "$wt/src/test/FooTest.java" "$hr")")" = 2 ] \
   && ok "hook denies a helper write to task code" \
   || bad "hook allowed a helper write to code"
@@ -221,12 +224,52 @@ wt="$hr/.worktree/demo"
 [ "$(hook helper "" "$(j_edit "$hr/.history/_pending/2026-11-16-x-intake.md" "$hr")")" = 2 ] \
   && ok "hook denies a helper write to the scoper's intake docs" \
   || bad "hook allowed a helper write to _pending/"
-[ "$(hook helper "" "$(j_edit "$hr/.history/_templates/brief.template.md" "$hr")")" = 2 ] \
-  && ok "hook denies a helper write to templates" \
-  || bad "hook allowed a helper write to _templates/"
-[ "$(hook helper "" "$(j_edit "$hr/.agent/skills/plan-review/SKILL.md" "$hr")")" = 2 ] \
-  && ok "hook denies a helper write to package skills" \
-  || bad "hook allowed a helper write to .agent/skills/"
+[ "$(hook helper "" "$(j_edit "$hr/.history/_templates/brief.template.md" "$hr")")" = 0 ] \
+  && ok "hook allows a helper write to _templates/ (the workflow's templates, §48)" \
+  || bad "hook blocked a helper write to _templates/ — §48 domain rule unproven"
+[ "$(hook helper "" "$(j_edit "$hr/.agent/skills/plan-review/SKILL.md" "$hr")")" = 0 ] \
+  && ok "hook allows a helper write to .agent/skills/ (the workflow's skills, §48)" \
+  || bad "hook blocked a helper write to .agent/skills/ — §48 domain rule unproven"
+[ "$(hook helper "" "$(j_edit "$hr/.agents/skills/helper/SKILL.md" "$hr")")" = 0 ] \
+  && ok "hook allows a helper write to .agents/ (the generated Codex mirror, §48)" \
+  || bad "hook blocked a helper write to .agents/"
+[ "$(hook helper "" "$(j_edit "$hr/.codex/config.toml" "$hr")")" = 0 ] \
+  && ok "hook allows a helper write to .codex/config.toml (the Codex install config, §48)" \
+  || bad "hook blocked a helper write to .codex/config.toml"
+[ "$(hook helper "" "$(j_edit "$hr/.codex/hooks.json" "$hr")")" = 2 ] \
+  && ok "hook denies a helper write to .codex/hooks.json (rule 1, the Codex guard file)" \
+  || bad "hook allowed a helper write to .codex/hooks.json — the Codex guard is open"
+[ "$(hook helper "" "$(j_edit "$hr/.agent/hooks/domain-guard.sh" "$hr")")" = 2 ] \
+  && ok "hook denies a helper write to .agent/hooks/ (rule 1, the guard scripts)" \
+  || bad "hook allowed a helper write to .agent/hooks/ — the guard is open"
+[ "$(hook helper "" "$(j_edit "$hr/CLAUDE.md" "$hr")")" = 2 ] \
+  && ok "hook denies a helper write to CLAUDE.md (the project's own config, §48)" \
+  || bad "hook allowed a helper write to CLAUDE.md — the project config is open"
+[ "$(hook helper "" "$(j_edit "$hr/.history/2026-11-10-demo/plan.md" "$hr")")" = 2 ] \
+  && ok "hook denies a helper write to the task plan (plan.md, §48)" \
+  || bad "hook allowed a helper write to the task plan"
+# Prose-hook agreement (v6.6 §48, audit L-C2/L-C3): the helper's prose
+# allowlist (.agent/commands/helper.md) and the hook rule
+# (.agent/hooks/domain-guard.sh) must name the SAME write domain. The
+# canonical domain is the prefix set below; the check greps each prefix
+# out of the prose AND out of the hook. If either side drops or renames a
+# prefix, the two disagree and the gate fails.
+_domain_ok=1
+for _p in 'docs/workflow/' '.history/_bin/' '.history/_templates/' '.agent/' '.claude/' '.agents/' '.codex/' '0.scratch/' 'MEMORY.md' 'project_*.md' '*.local.json'; do
+  grep -qF "$_p" "$AGENT_DIR/commands/helper.md" \
+    || { _domain_ok=0; echo "  (prose missing: $_p)"; }
+  grep -qF "$_p" "$AGENT_DIR/hooks/domain-guard.sh" \
+    || { _domain_ok=0; echo "  (hook missing: $_p)"; }
+done
+# The guard files + the project config must appear in the prose's
+# Never-edit list (they are denied, not allowed).
+for _d in '.agent/settings.json' '.claude/settings.json' '.codex/hooks.json' '.agent/hooks/' '.claude/hooks/' 'CLAUDE.md' 'api-config.env'; do
+  grep -qF "$_d" "$AGENT_DIR/commands/helper.md" \
+    || { _domain_ok=0; echo "  (prose never-edit missing: $_d)"; }
+done
+[ "$_domain_ok" = 1 ] \
+  && ok "helper prose allowlist agrees with the hook rule (same domain, §48)" \
+  || bad "helper prose and hook rule disagree on the write domain (L-C2/L-C3)"
 [ "$(hook helper "" "$(j_read "$hr/docs/workflow/control-plane-pm.md" "$hr")")" = 0 ] \
   && ok "hook allows a helper to READ the plan (reads are unrestricted)" \
   || bad "hook blocked a helper read — reads must stay open for debugging"
@@ -814,7 +857,11 @@ past_epoch=$(( $(date +%s) - 120 ))
 past_hm="$(date -u -d "@$past_epoch" '+%H:%M' 2>/dev/null || date -u -r "$past_epoch" '+%H:%M')"
 printf -- '- state: WAITING kind:pre-test-review clearer:plane since:%s\n' "$past_hm" >> "$wroot/.history/2026-11-11-demo/worklog.md"
 STALE_AFTER=0 runner_run
-tail -5 "$wroot/.history/_runner.log" | grep -q 'overdue check: 1 overdue — oldest: 2026-11-11-demo WAITING kind:pre-test-review' \
+# tail -15, not -5: the lines logged after the overdue check vary (harness
+# wake, stale/relay scans when due), and a tight window flakes when the
+# scan logs land after it. The cycle logs ~10 lines, so 15 still scopes
+# the check to this cycle (the stale row was only just appended).
+tail -15 "$wroot/.history/_runner.log" | grep -q 'overdue check: 1 overdue — oldest: 2026-11-11-demo WAITING kind:pre-test-review' \
   && ok "runner overdue check flags a WAITING row older than STALE_AFTER" \
   || bad "runner overdue check missed the stale WAITING row"
 if command -v tmux >/dev/null 2>&1; then
@@ -977,6 +1024,79 @@ grep -q "workflow-runner $rroot_abs" "$FAKE_CRONTAB_FILE" \
   && ok "runner uninstall removes the cron job" \
   || bad "runner uninstall left the cron entry"
 unset FAKE_CRONTAB_FILE
+
+echo "== plane-poll (v6.6): the GENERAL polling, notice file, harness wake"
+# Static: plane-poll.sh exists, checks the stop marker, writes notices,
+# uses the harness wake, installs at 30 min, never references the watcher.
+[ -f .history/_bin/mac/plane-poll.sh ] \
+  && ok "plane-poll.sh present (the general polling, restored in v6.6)" \
+  || bad "plane-poll.sh missing — the general polling is not installed"
+grep -q '_watcher_stop' .history/_bin/mac/plane-poll.sh \
+  && ok "plane-poll.sh checks the stop marker" \
+  || bad "plane-poll.sh does not check the stop marker"
+grep -q 'notice_add' .history/_bin/mac/plane-poll.sh \
+  && grep -q '_runner-notices.md' .history/_bin/mac/notices.sh \
+  && ok "plane-poll.sh writes notices to the durable notice file" \
+  || bad "plane-poll.sh does not write notices (or notices.sh is missing)"
+grep -q 'harness_wake' .history/_bin/mac/plane-poll.sh \
+  && grep -q 'codex queue' .history/_bin/mac/wake.sh \
+  && ok "plane-poll.sh wakes via the harness adapter (codex queue / tmux)" \
+  || bad "plane-poll.sh does not use the harness wake"
+grep -q '\*/30' .history/_bin/mac/plane-poll.sh \
+  && ok "plane-poll.sh installs at 30 min (the general cadence)" \
+  || bad "plane-poll.sh does not install at 30 min"
+! grep -q 'plane-watch' .history/_bin/mac/plane-poll.sh \
+  && ok "plane-poll.sh never references the deleted watcher" \
+  || bad "plane-poll.sh still references plane-watch.sh"
+[ -f .history/_bin/mac/notices.sh ] && grep -q 'notice_add' .history/_bin/mac/notices.sh \
+  && ok "notices.sh present with the notice_add helper" \
+  || bad "notices.sh missing or lost notice_add"
+grep -q 'harness_wake' .history/_bin/mac/wake.sh && grep -q 'tmux_bin' .history/_bin/mac/wake.sh \
+  && ok "wake.sh carries the harness adapter + the TMUX_BIN fix" \
+  || bad "wake.sh lost harness_wake or tmux_bin"
+grep -q 'plane-poll.sh.*install' .history/_bin/mac/boot.sh && grep -q '_plane_session' .history/_bin/mac/boot.sh \
+  && ok "boot.sh registers the poll and records the plane session" \
+  || bad "boot.sh does not register the poll / record the session"
+grep -q 'situational' .history/_bin/mac/runner.sh && grep -q 'plane-poll' .history/_bin/mac/runner.sh \
+  && ok "runner.sh is situational (the poll is general, the runner is not the default)" \
+  || bad "runner.sh still presents itself as the default"
+# Functional: run plane-poll.sh in a fixture root — empty diff exits 0 with
+# no notice; a changed task file writes a diff notice to the notice file.
+proot="$work/poll-root"
+mkdir -p "$proot/.history/_bin" "$proot/.history/2026-11-27-poll-task"
+cp -r .history/_bin/linux "$proot/.history/_bin/linux"
+cp .history/_templates/TASK_LIST.template.md "$proot/.history/TASK_LIST.md"
+chmod +x "$proot/.history/_bin/mac/"*.sh
+printf '| # | Worker | Host:Pid | Launched-by | Phase | Method | Commitment | Write domain | Resource tokens | Claimed-at | Status | Granted-at | Notes |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|\n| 1 | w1 | host:1 | plane | impl | md | c1 | src/** | manual-test | 2026-11-27 10:00 | EXECUTING | 2026-11-27 10:01 | |\n' > "$proot/.history/2026-11-27-poll-task/workers.md"
+printf '2026-11-27 10:00 — worker: executing\n- state: ACTIVE impl\n' > "$proot/.history/2026-11-27-poll-task/worklog.md"
+printf '# inbox\n' > "$proot/.history/2026-11-27-poll-task/inbox.md"
+printf 'brief\n' > "$proot/.history/2026-11-27-poll-task/brief.md"
+# First run establishes the snapshots (a new task IS a change, so a notice
+# may be written); clear it, then the second run is the true empty-diff check.
+(cd "$proot" && bash .history/_bin/mac/plane-poll.sh >/dev/null 2>&1)
+[ $? -eq 0 ] \
+  && ok "plane-poll.sh runs one cycle and exits 0" \
+  || bad "plane-poll.sh did not exit cleanly"
+rm -f "$proot/.history/_runner-notices.md"
+(cd "$proot" && bash .history/_bin/mac/plane-poll.sh >/dev/null 2>&1)
+[ $? -eq 0 ] \
+  && ok "plane-poll.sh exits 0 on a settled fixture" \
+  || bad "plane-poll.sh did not exit cleanly on a settled fixture"
+[ ! -f "$proot/.history/_runner-notices.md" ] \
+  && ok "plane-poll.sh writes no notice on an empty diff" \
+  || bad "plane-poll.sh wrote a notice on an empty diff"
+printf '2026-11-27 10:05 — worker: changed a file\n' >> "$proot/.history/2026-11-27-poll-task/worklog.md"
+(cd "$proot" && bash .history/_bin/mac/plane-poll.sh >/dev/null 2>&1)
+[ $? -eq 0 ] \
+  && ok "plane-poll.sh exits 0 on a non-empty diff" \
+  || bad "plane-poll.sh did not exit cleanly on a non-empty diff"
+grep -q 'kind=diff' "$proot/.history/_runner-notices.md" 2>/dev/null \
+  && grep -q 'role=plane' "$proot/.history/_runner-notices.md" 2>/dev/null \
+  && ok "plane-poll.sh wrote a diff notice (role=plane, kind=diff) to the notice file" \
+  || bad "plane-poll.sh did not write the diff notice"
+[ -d "$proot/.history/._poll_state" ] \
+  && ok "plane-poll.sh wrote its state dir" \
+  || bad "plane-poll.sh wrote no state dir"
 
 echo "== phase-done Stop hook (v6 track A): signals only at phase end"
 sroot2="$work/stop-root"
@@ -1392,10 +1512,9 @@ echo "== v6.5 gates: plan template, keys map, slug resolution, tick hard-fail, b
 [ -f docs/workflow/core-spec.md ] && [ "$(grep -cE '^[0-9]+\. \*\*' docs/workflow/core-spec.md)" -eq 45 ] \
   && ok "core spec carries the 45 items" \
   || bad "core-spec.md missing or does not carry 45 items"
-grep -q "docs/workflow/keys.md" "$AGENT_DIR/commands/helper.md" \
-  && ok "helper allowlist carries the exact-file keys.md carve-out" \
-  || bad "helper.md lost the keys.md carve-out"
-# slug resolution at DECLARE (v6.5 §8.2) + tick --diff hard-fail.
+grep -q "docs/workflow/" "$AGENT_DIR/commands/helper.md" \
+  && ok "helper allowlist is domain-shaped — docs/workflow/ is a helper write domain (the keys.md carve-out is subsumed, §48)" \
+  || bad "helper.md lost the docs/workflow/ write domain"
 droot="$work/declare-root"
 mkdir -p "$droot/.history/2026-11-20-userlog-aspect-args" "$droot/.history/_bin"
 cp -r .history/_bin/linux "$droot/.history/_bin/linux"
@@ -1645,6 +1764,137 @@ bash "$tpkg/.history/_bin/linux/init.sh" "$tlive" 2>&1 | grep -q 'INIT-ABORTED' 
   && ok "init aborts when intake.template.md is missing from every source (partial copy caught)" \
   || bad "init installed without the intake template — partial copy not caught"
 rm -rf "$work" ".history/relay-gate-selftest"
+
+echo "== Codex .agents/ drift gate (v6.6): .agents/ matches the generation from .agent/"
+# .agents/ is a generated derivative of .agent/ (ADOPT.md §3 step 6), never
+# hand-edited. The gate proves the shipped .agents/ matches the generation:
+# 5 review/init skills byte-identical; 6 trigger skills from .agent/commands/
+# with disable-model-invocation: true; the plane skill has no command source
+# (package-authored trigger) so it is checked for presence + flag only.
+# The .codex/ registration is checked too: commandWindows points at the repo
+# guard (never bash), timeout present, and the guard carries the JSON-deny
+# marker (permissionDecision). NOTE: the field is `timeout`, not `timeoutSec`
+# (B5 schema drift — the staging expectation was wrong; the working
+# hooks.json uses `timeout`).
+for _s in plan-review pre-test-review requirements-grill test-result-review workflow-init; do
+  cmp -s "$AGENT_DIR/skills/$_s/SKILL.md" ".agents/skills/$_s/SKILL.md" \
+    && ok "agents skill $_s is a byte-identical mirror of .agent/skills/$_s" \
+    || bad "agents skill $_s drifted from .agent/skills/$_s (re-run the ADOPT.md §3 step 6 generation)"
+done
+# body_after_frontmatter <file> -> the file minus its --- frontmatter block
+body_after_frontmatter() {
+  awk 'NR==1 && /^---$/ {n++; next} n==1 && /^---$/ {n++; next} n>=2' "$1"
+}
+for _t in control-plane helper worker grill shutdown; do
+  _gen=".agents/skills/$_t/SKILL.md"
+  _src="$AGENT_DIR/commands/$_t.md"
+  if [ ! -f "$_gen" ]; then bad "agents skill $_t missing (re-run the ADOPT.md §3 step 6 generation)"; continue; fi
+  grep -q '^disable-model-invocation: true' "$_gen" \
+    && cmp -s <(body_after_frontmatter "$_gen") <(body_after_frontmatter "$_src") \
+    && ok "agents skill $_t matches .agent/commands/$_t.md with disable-model-invocation: true" \
+    || bad "agents skill $_t drifted from .agent/commands/$_t.md or lost the flag"
+done
+# plane: no .agent/commands/plane.md source — presence + flag only.
+if [ -f ".agents/skills/plane/SKILL.md" ] && grep -q '^disable-model-invocation: true' ".agents/skills/plane/SKILL.md"; then
+  ok "agents skill plane present with disable-model-invocation: true"
+else
+  bad "agents skill plane missing or lost the flag"
+fi
+# .codex/ registration + guard return form.
+if [ -f ".codex/hooks.json" ] \
+  && grep -q 'commandWindows' ".codex/hooks.json" \
+  && grep -q 'domain-guard.ps1' ".codex/hooks.json" \
+  && grep -q '"timeout"' ".codex/hooks.json" \
+  && ! grep -q 'bash' ".codex/hooks.json"; then
+  ok ".codex/hooks.json wires PreToolUse to the repo PowerShell guard (commandWindows, timeout, never bash)"
+else
+  bad ".codex/hooks.json missing or does not wire PreToolUse to the repo PowerShell guard"
+fi
+if [ -f "$AGENT_DIR/hooks/domain-guard.ps1" ] && grep -q 'permissionDecision' "$AGENT_DIR/hooks/domain-guard.ps1"; then
+  ok "domain-guard.ps1 carries the Codex JSON-deny marker (permissionDecision)"
+else
+  bad "domain-guard.ps1 missing or lost the JSON-deny marker (permissionDecision)"
+fi
+# §49 helper applies the guards at the end of adoption: ADOPT.md §3 and
+# the workflow-init skill must carry an explicit "Apply the guards" step,
+# positioned BEFORE the live-probe (the guards go on last, then the probe
+# verifies them), and the live-probe must say a failed probe is reported,
+# never claimed as guarded. The Codex trust step must be a human action.
+_guard_ok() { # _guard_ok <file> — "Apply the guards (§49)" precedes "Hook live-probe"
+  _g=$(grep -n 'Apply the guards (§49)' "$1" | head -1 | cut -d: -f1)
+  _p=$(grep -n 'Hook live-probe' "$1" | head -1 | cut -d: -f1)
+  [ -n "$_g" ] && [ -n "$_p" ] && [ "$_g" -lt "$_p" ]
+}
+_guard_ok "ADOPT.md" \
+  && grep -q 'If the live-probe fails' "ADOPT.md" \
+  && grep -q 'the helper reports this' "ADOPT.md" \
+  && ok "ADOPT.md carries the §49 guard step before the live-probe (failed probe is reported, trust is a human action)" \
+  || bad "ADOPT.md lost the §49 guard step or its ordering (guards last, then probe)"
+_guard_ok "$AGENT_DIR/skills/workflow-init/SKILL.md" \
+  && grep -q 'If the live-probe fails' "$AGENT_DIR/skills/workflow-init/SKILL.md" \
+  && grep -q 'report this as a human action' "$AGENT_DIR/skills/workflow-init/SKILL.md" \
+  && ok "workflow-init carries the §49 guard step before the live-probe" \
+  || bad "workflow-init lost the §49 guard step or its ordering"
+# §50 Claude-side wake gate (UserPromptSubmit hook blocks a noop tick):
+# the hook lets through user prompts, scheduled wakeups with a pending
+# notice for the session's role, and scheduled wakeups when the poll is
+# stale (backstop); it blocks a scheduled wakeup with no pending notice
+# for the role and a fresh poll. settings.json must register it.
+echo "== wake gate (§50): UserPromptSubmit blocks a noop tick"
+wgroot="$work/wake-gate-root"
+mkdir -p "$wgroot/.history/._tick_snapshots/plane" "$wgroot/.history/._poll_state" "$wgroot/.history/._worker_sessions"
+printf 'harness=claude\nsession=plane-uuid-1\n' > "$wgroot/.history/._plane_session"
+printf 'harness=claude\nsession=worker-uuid-1\n' > "$wgroot/.history/._worker_sessions/2026-11-27-demo"
+touch "$wgroot/.history/._tick_snapshots/plane/task.md"
+printf '%s\n' '# Runner notices (append-only)' '' '## plane' '- [ ] 2026-11-27T10:00:00Z role=plane kind=diff summary="diff: worklog changed"' '  worklog.md' '- [x] 2026-11-27T09:00:00Z role=plane kind=overdue summary="overdue: 1"' > "$wgroot/.history/_runner-notices.md"
+wgate() { # wgate <json> — prints wake-gate.sh's exit code
+  WORKFLOW_ROOT="$wgroot" bash "$AGENT_DIR/hooks/wake-gate.sh" <<< "$1" 2>/dev/null; echo $?
+}
+[ "$(wgate '{"source":"user","session_id":"plane-uuid-1","prompt":"hi","cwd":"'"$wgroot"'"}')" = 0 ] \
+  && ok "wake gate lets a user prompt through (only scheduled wakeups are gated)" \
+  || bad "wake gate blocked a user prompt"
+[ "$(wgate '{"source":"schedule_wakeup","session_id":"plane-uuid-1","prompt":"tick","cwd":"'"$wgroot"'"}')" = 0 ] \
+  && ok "wake gate lets a scheduled wakeup through when the plane has a pending notice" \
+  || bad "wake gate blocked a scheduled wakeup with a pending notice"
+[ "$(wgate '{"source":"schedule_wakeup","session_id":"worker-uuid-1","prompt":"tick","cwd":"'"$wgroot"'"}')" = 2 ] \
+  && ok "wake gate blocks a scheduled wakeup with no pending notice for the worker" \
+  || bad "wake gate let a noop tick through for the worker"
+[ "$(wgate '{"source":"loop_wakeup","session_id":"worker-uuid-1","prompt":"tick","cwd":"'"$wgroot"'"}')" = 2 ] \
+  && ok "wake gate blocks a loop_wakeup with no pending notice" \
+  || bad "wake gate let a loop noop through"
+rm -rf "$wgroot/.history/._tick_snapshots" "$wgroot/.history/._poll_state"
+[ "$(wgate '{"source":"schedule_wakeup","session_id":"worker-uuid-1","prompt":"tick","cwd":"'"$wgroot"'"}')" = 0 ] \
+  && ok "wake gate lets a scheduled wakeup through when the poll is stale (backstop)" \
+  || bad "wake gate blocked a wakeup on a stale poll — the backstop is broken"
+if grep -q 'UserPromptSubmit' "$AGENT_DIR/settings.json" && grep -q 'wake-gate.sh' "$AGENT_DIR/settings.json" && [ -x "$AGENT_DIR/hooks/wake-gate.sh" ]; then
+  ok "settings.json registers the UserPromptSubmit wake gate (wake-gate.sh, executable)"
+else
+  bad "settings.json does not register the wake gate, or wake-gate.sh is missing/not executable"
+fi
+if ! grep -q 'tick --diff' "$AGENT_DIR/hooks/wake-gate.sh"; then
+  ok "wake gate never runs tick --diff (a single cheap file read, no 30 s timeout risk)"
+else
+  bad "wake gate runs tick --diff — it must only read the notice file"
+fi
+rm -rf "$wgroot"  # the wake-gate fixture lives after the $work cleanup (line 1777), so remove it here
+# §51 ladder as backup + polling test matrix: the ladder header must
+# state it is a backup/failsafe (not the primary cost control), and the
+# test-matrix doc must exist and cover the three activation options.
+if grep -q 'BACKUP / failsafe, NOT the primary cost' "$bin/tick.sh" && grep -q 'event-driven wake' "$bin/tick.sh"; then
+  ok "tick.sh states the ladder is a backup/failsafe, not the primary cost control (§51)"
+else
+  bad "tick.sh does not state the ladder's backup role (§51)"
+fi
+if [ -f "docs/workflow/polling-test-matrix.md" ] \
+  && grep -q 'codex queue' "docs/workflow/polling-test-matrix.md" \
+  && grep -q 'wake gate' "docs/workflow/polling-test-matrix.md" \
+  && grep -q 'self-polling' "docs/workflow/polling-test-matrix.md" \
+  && grep -q 'Token cost' "docs/workflow/polling-test-matrix.md" \
+  && grep -q 'Failure modes' "docs/workflow/polling-test-matrix.md"; then
+  ok "polling test matrix exists and compares the three activation options (§51)"
+else
+  bad "polling test matrix missing or does not cover the three options (§51)"
+fi
 if [ $fail -eq 0 ]; then echo "SELFTEST-PASS: every gate demonstrated failing and passing"
 else echo "SELFTEST-FAIL: one or more gates unproven"; fi
 exit $fail

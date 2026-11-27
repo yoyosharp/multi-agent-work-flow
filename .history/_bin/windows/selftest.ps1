@@ -230,8 +230,8 @@ if ((Test-Path 'docs\workflow\delivery.md') -and (Select-String -Path 'docs\work
 else { "  SELFTEST-FAIL: delivery.md missing"; $fail = 1 }
 if ((Test-Path 'docs\workflow\core-spec.md') -and ((Select-String -Path 'docs\workflow\core-spec.md' -Pattern '^[0-9]+\. \*\*' -AllMatches).Count -eq 45)) { "  ok: core spec carries the 45 items" }
 else { "  SELFTEST-FAIL: core-spec.md missing or does not carry 45 items"; $fail = 1 }
-if (Select-String -Path (Join-Path $AgentDir 'commands\helper.md') -Pattern 'docs\\workflow\\keys.md' -Quiet) { "  ok: helper allowlist carries the exact-file keys.md carve-out" }
-else { "  SELFTEST-FAIL: helper.md lost the keys.md carve-out"; $fail = 1 }
+if (Select-String -Path (Join-Path $AgentDir 'commands\\helper.md') -Pattern 'docs/workflow/' -Quiet) { "  ok: helper allowlist is domain-shaped - docs/workflow/ is a helper write domain (the keys.md carve-out is subsumed, §48)" }
+else { "  SELFTEST-FAIL: helper.md lost the docs/workflow/ write domain"; $fail = 1 }
 if ((Select-String -Path 'docs\workflow\verify-duties.md' -Pattern 'FIFO' -Quiet) -and (Select-String -Path 'docs\workflow\control-plane-instructions.md' -Pattern 'FIFO' -Quiet)) { "  ok: CLOSE verify is FIFO — oldest WAITING first" }
 else { "  SELFTEST-FAIL: FIFO fairness rule missing from verify-duties or control-plane-instructions"; $fail = 1 }
 if ((Select-String -Path (Join-Path $AgentDir 'commands\worker.md') -Pattern 'never dispatch' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'skills\plan-review\SKILL.md') -Pattern 'never dispatches plan-review' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'skills\pre-test-review\SKILL.md') -Pattern 'never dispatches §3.1' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'skills\test-result-review\SKILL.md') -Pattern 'never dispatches test-result-review' -Quiet)) { "  ok: forbid rule stated in worker.md + all three review skills (v6.4.3)" }
@@ -256,10 +256,26 @@ else { "  SELFTEST-FAIL: Get-ClaimRows did not parse the old-shape workers.md: $
 # build machine); the static assertions run wherever the file is read.
 if ((Test-Path (Join-Path $AgentDir 'commands\shutdown.md')) -and (Select-String -Path (Join-Path $AgentDir 'commands\shutdown.md') -Pattern 'shutdown.sh' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'commands\shutdown.md') -Pattern 'refuses' -Quiet)) { "  ok: shutdown command present with the plane-only role check" }
 else { "  SELFTEST-FAIL: shutdown command missing or lost the plane-only role check"; $fail = 1 }
-# the marker is plane-only by hook rule 3 (bash hook — no Windows port, so
-# the denial is proven by the linux/mac selftest, not here).
+# the marker is plane-only by hook rule 3 (the Windows guard,
+# domain-guard.ps1, enforces it on Codex; the bash hook proves it on linux/mac).
 if (Select-String -Path (Join-Path $bin 'runner.ps1') -Pattern '_watcher_stop' -Quiet) { "  ok: runner.ps1 checks the stop marker" }
 else { "  SELFTEST-FAIL: runner.ps1 has no stop-marker check"; $fail = 1 }
+# v6.6 - plane-poll.ps1 (the GENERAL polling, restored): stop marker, notice
+# file, harness wake, 30-min install, never the deleted watcher.
+if (Test-Path (Join-Path $bin 'plane-poll.ps1')) { "  ok: plane-poll.ps1 present (the general polling, restored in v6.6)" }
+else { "  SELFTEST-FAIL: plane-poll.ps1 missing — the general polling is not installed"; $fail = 1 }
+if (Select-String -Path (Join-Path $bin 'plane-poll.ps1') -Pattern '_watcher_stop' -Quiet) { "  ok: plane-poll.ps1 checks the stop marker" }
+else { "  SELFTEST-FAIL: plane-poll.ps1 missing the stop marker check"; $fail = 1 }
+if ((Select-String -Path (Join-Path $bin 'plane-poll.ps1') -Pattern 'Add-Notice' -Quiet) -and (Select-String -Path (Join-Path $bin 'notices.ps1') -Pattern 'Add-Notice' -Quiet)) { "  ok: plane-poll.ps1 writes notices to the durable notice file" }
+else { "  SELFTEST-FAIL: plane-poll.ps1 does not write notices (or notices.ps1 is missing)"; $fail = 1 }
+if ((Select-String -Path (Join-Path $bin 'plane-poll.ps1') -Pattern 'Send-HarnessWake' -Quiet) -and (Select-String -Path (Join-Path $bin 'wake.ps1') -Pattern 'codex queue' -Quiet)) { "  ok: plane-poll.ps1 wakes via the harness adapter (codex queue)" }
+else { "  SELFTEST-FAIL: plane-poll.ps1 does not use the harness wake"; $fail = 1 }
+if (Select-String -Path (Join-Path $bin 'plane-poll.ps1') -Pattern 'Minutes 30' -Quiet) { "  ok: plane-poll.ps1 installs at 30 min (the general cadence)" }
+else { "  SELFTEST-FAIL: plane-poll.ps1 does not install at 30 min"; $fail = 1 }
+if (-not (Select-String -Path (Join-Path $bin 'plane-poll.ps1') -Pattern 'plane-watch' -Quiet)) { "  ok: plane-poll.ps1 never references the deleted watcher" }
+else { "  SELFTEST-FAIL: plane-poll.ps1 still references plane-watch"; $fail = 1 }
+if ((Select-String -Path (Join-Path $bin 'runner.ps1') -Pattern 'situational' -Quiet) -and (Select-String -Path (Join-Path $bin 'runner.ps1') -Pattern 'plane-poll' -Quiet)) { "  ok: runner.ps1 is situational (the poll is general, the runner is not the default)" }
+else { "  SELFTEST-FAIL: runner.ps1 still presents itself as the default"; $fail = 1 }
 # runner exits at once on the stop marker (fixture: scratch tree
 # carrying the script; tick.ps1 fails with no lock, so the baseline is
 # nonzero and the marker run must be 0 with no state dir).
@@ -302,8 +318,8 @@ else { "  SELFTEST-FAIL: a live claim row survived the shutdown release"; $fail 
 if ((Select-String -Path "$sd\.history\2026-11-11-demo\worklog.md" -Pattern 'session end — shutdown' -Quiet) -and (Select-String -Path "$sd\.history\2026-11-11-demo\worklog.md" -Pattern 'B3 checkpoint' -Quiet) -and (Select-String -Path "$sd\.history\2026-11-11-demo\inbox.md" -Pattern '^SHUTDOWN — ' -Quiet)) { "  ok: shutdown release leaves the B3 checkpoint + session-end log + inbox row" }
 else { "  SELFTEST-FAIL: shutdown release is missing checkpoint, session-end log, or inbox row"; $fail = 1 }
 "== scoper + helper (v6.2): skill, commands, template, §0 pointers (static only)"
-# Static assertions only — the hook is bash, no Windows port, so the
-# allow/deny behavior is proven by the linux/mac selftest, not here.
+# Static assertions only — the guard behavior is proven by the
+# linux/mac selftest (bash hook) and the Codex guard (domain-guard.ps1).
 if ((Test-Path (Join-Path $AgentDir 'skills\requirements-grill\SKILL.md')) -and (Select-String -Path (Join-Path $AgentDir 'skills\requirements-grill\SKILL.md') -Pattern 'grill-me' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'skills\requirements-grill\SKILL.md') -Pattern 'Phase 0' -Quiet)) { "  ok: requirements-grill skill present with attribution + Phase 0" }
 else { "  SELFTEST-FAIL: requirements-grill skill missing or lost attribution/Phase 0"; $fail = 1 }
 if ((Test-Path (Join-Path $AgentDir 'commands\grill.md')) -and (Select-String -Path (Join-Path $AgentDir 'commands\grill.md') -Pattern 'declare-role.sh scoper' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'commands\grill.md') -Pattern 'disable-model-invocation: true' -Quiet)) { "  ok: grill command present, user-invoked only, declares the scoper role (no env var)" }
@@ -317,14 +333,84 @@ else { "  SELFTEST-FAIL: §0 pointers missing from the plane docs"; $fail = 1 }
 if ((Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern 'helper may edit only scripts under .history/_bin/' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern 'helper/scoper may not stop servers' -Quiet)) { "  ok: helper _bin scripts-only + helper/scoper server-stop deny present in hook" }
 else { "  SELFTEST-FAIL: hook missing the helper _bin scripts-only or server-stop deny"; $fail = 1 }
 "== session-declared roles (v6.3): registry + declare-role (static only)"
-# Static assertions only — the hook is bash, no Windows port, so the
-# registry allow/deny behavior is proven by the linux/mac selftest, not here.
-if ((Test-Path '.history\_bin\windows\declare-role.ps1') -and (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern 'role=' -Quiet) -and (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern 'slug=' -Quiet) -and (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern 'Get-CimInstance Win32_Process' -Quiet) -and (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern 'ParentProcessId' -Quiet)) { "  ok: declare-role.ps1 present with the registry format + CIM parent-chain walk-up" }
+# Static assertions only — the registry allow/deny behavior is
+# proven by the linux/mac selftest (bash hook) and the Codex guard
+# (domain-guard.ps1).
+if ((Test-Path '.history\_bin\windows\declare-role.ps1') -and (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern 'role=' -Quiet) -and (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern 'slug=' -Quiet) -and (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern 'CreateToolhelp32Snapshot' -Quiet) -and (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern 'ParentProcessId' -Quiet)) { "  ok: declare-role.ps1 present with the registry format + Toolhelp parent-chain walk-up" }
 else { "  SELFTEST-FAIL: declare-role.ps1 missing or lost the registry format / walk-up"; $fail = 1 }
-if (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern "match '\^claude" -Quiet) { "  ok: declare-role.ps1 matches the exact agent image name, not a substring" }
-else { "  SELFTEST-FAIL: declare-role.ps1 matches 'claude' as a substring (wrapper processes would be registered)"; $fail = 1 }
+if (-not (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern 'Get-CimInstance' -Quiet)) { "  ok: declare-role.ps1 has no WMI/CIM dependency (CIM is denied under the Codex sandbox)" }
+else { "  SELFTEST-FAIL: declare-role.ps1 still depends on WMI/CIM - unusable under the Codex sandbox"; $fail = 1 }
+if (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern '\^\(claude\|codex\)' -Quiet) { "  ok: declare-role.ps1 matches claude|codex by exact image name, not a substring" }
+else { "  SELFTEST-FAIL: declare-role.ps1 does not match the agent image by exact name (wrapper processes would be registered)"; $fail = 1 }
 if ((Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern '_sessions' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern 'HOOK_AGENT_PID' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern 'find_agent_pid' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern 'registry files are per-session' -Quiet)) { "  ok: hook reads the registry first (HOOK_AGENT_PID override, per-session carve-out)" }
 else { "  SELFTEST-FAIL: hook missing the registry read / override / carve-out"; $fail = 1 }
+# v6.6 - Codex harness: the PreToolUse guard is ported to PowerShell and
+# registered in .codex/hooks.json (Codex 0.172+ runs project hooks there).
+# The package ships a relative repo path in hooks.json (not a machine
+# absolute path), so the check matches the relative form.
+if ($AgentDir -eq '.agent') {
+  $hps = Join-Path $AgentDir 'hooks\domain-guard.ps1'
+  if ((Test-Path $hps) -and (Select-String -Path $hps -Pattern 'helper may write only to the workflow install' -Quiet) -and (Select-String -Path $hps -Pattern 'helper/scoper may not stop servers' -Quiet)) { "  ok: domain-guard.ps1 carries the domain-shaped helper allowlist (§48) + server-stop deny" }
+  else { "  SELFTEST-FAIL: domain-guard.ps1 missing the domain-shaped helper allowlist or server-stop deny"; $fail = 1 }
+  if ((Test-Path $hps) -and (Select-String -Path $hps -Pattern '_sessions' -Quiet) -and (Select-String -Path $hps -Pattern 'HOOK_AGENT_PID' -Quiet) -and (Select-String -Path $hps -Pattern 'Find-AgentPid' -Quiet) -and (Select-String -Path $hps -Pattern 'registry files are per-session' -Quiet)) { "  ok: domain-guard.ps1 reads the registry first (HOOK_AGENT_PID override, per-session carve-out)" }
+  else { "  SELFTEST-FAIL: domain-guard.ps1 missing the registry read / override / carve-out"; $fail = 1 }
+  if (Test-Path '.codex\hooks.json') {
+    $hj = $null
+    try { $hj = (Get-Content '.codex\hooks.json' -Raw) | ConvertFrom-Json } catch { }
+    $cmdWin = ''
+    try { $cmdWin = [string]$hj.hooks.PreToolUse[0].hooks[0].commandWindows } catch { }
+    if ($hj -and $cmdWin -and ($cmdWin -like "*domain-guard.ps1*")) { "  ok: .codex/hooks.json registers PreToolUse -> domain-guard.ps1 (commandWindows points at the repo's guard)" }
+    else { "  SELFTEST-FAIL: .codex/hooks.json missing/invalid or its commandWindows does not point at the repo's domain-guard.ps1"; $fail = 1 }
+  }
+  else { "  SELFTEST-FAIL: .codex/hooks.json missing - the Codex domain-guard is not registered"; $fail = 1 }
+  if ((Test-Path $hps) -and (Select-String -Path $hps -Pattern 'permissionDecision' -Quiet)) { "  ok: domain-guard.ps1 blocks via the Codex JSON deny (hookSpecificOutput.permissionDecision)" }
+  else { "  SELFTEST-FAIL: domain-guard.ps1 lacks the Codex JSON deny - Codex ignores exit-2 for PreToolUse and the guard would be inert"; $fail = 1 }
+  # v6.6 §48 - prose-hook agreement (static): the helper's prose allowlist
+  # (helper.md) and both hook rules (domain-guard.sh + domain-guard.ps1)
+  # must name the same write domain. Each canonical prefix must appear in
+  # all three files; the guard files + the project config must appear in
+  # the prose's Never-edit list.
+  $domainOk = $true
+  foreach ($dp in 'docs/workflow/', '.history/_bin/', '.history/_templates/', '.agent/', '.claude/', '.agents/', '.codex/', '0.scratch/', 'MEMORY.md', 'project_*.md', '*.local.json') {
+    if (-not (Select-String -Path (Join-Path $AgentDir 'commands\helper.md') -Pattern ([regex]::Escape($dp)) -Quiet)) { $domainOk = $false; "  (prose missing: $dp)" }
+    if (-not (Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern ([regex]::Escape($dp)) -Quiet)) { $domainOk = $false; "  (bash hook missing: $dp)" }
+    if (-not (Select-String -Path $hps -Pattern ([regex]::Escape($dp)) -Quiet)) { $domainOk = $false; "  (ps1 hook missing: $dp)" }
+  }
+  foreach ($dd in '.agent/settings.json', '.claude/settings.json', '.codex/hooks.json', '.agent/hooks/', '.claude/hooks/', 'CLAUDE.md', 'api-config.env') {
+    if (-not (Select-String -Path (Join-Path $AgentDir 'commands\helper.md') -Pattern ([regex]::Escape($dd)) -Quiet)) { $domainOk = $false; "  (prose never-edit missing: $dd)" }
+  }
+  if ($domainOk) { "  ok: helper prose allowlist agrees with both hook rules (same domain, §48)" }
+  else { "  SELFTEST-FAIL: helper prose and hook rules disagree on the write domain (L-C2/L-C3)"; $fail = 1 }
+}
+# v6.6 - Codex .agents/ drift gate (selftest.ps1 mirror of the selftest.sh gate):
+# .agents/ matches the generation from .agent/ (ADOPT.md §3 step 6).
+# Mirrors byte-identical; triggers from .agent/commands/ with
+# disable-model-invocation: true; plane presence + flag only.
+if ($AgentDir -eq '.agent') {
+  function Get-BodyAfterFrontmatter([string]$path) {
+    $lines = Get-Content $path
+    $out = @(); $seen = 0
+    foreach ($l in $lines) {
+      if (($seen -lt 2) -and ($l -eq '---')) { $seen++; continue }
+      if ($seen -ge 2) { $out += $l }
+    }
+    return ($out -join "`n")
+  }
+  foreach ($s in 'plan-review','pre-test-review','requirements-grill','test-result-review','workflow-init') {
+    $a = Join-Path $AgentDir "skills\$s\SKILL.md"
+    $b = ".agents\skills\$s\SKILL.md"
+    if ((Test-Path $a) -and (Test-Path $b) -and ((Get-Content $a -Raw) -eq (Get-Content $b -Raw))) { "  ok: agents skill $s is a byte-identical mirror of .agent/skills/$s" }
+    else { "  SELFTEST-FAIL: agents skill $s drifted from .agent/skills/$s (re-run the ADOPT.md §3 step 6 generation)"; $fail = 1 }
+  }
+  foreach ($t in 'control-plane','helper','worker','grill','shutdown') {
+    $gen = ".agents\skills\$t\SKILL.md"
+    $src = Join-Path $AgentDir "commands\$t.md"
+    if ((Test-Path $gen) -and (Test-Path $src) -and (Select-String -Path $gen -Pattern '^disable-model-invocation: true' -Quiet) -and ((Get-BodyAfterFrontmatter $gen) -eq (Get-BodyAfterFrontmatter $src))) { "  ok: agents skill $t matches .agent/commands/$t.md with disable-model-invocation: true" }
+    else { "  SELFTEST-FAIL: agents skill $t drifted from .agent/commands/$t.md or lost the flag"; $fail = 1 }
+  }
+  if ((Test-Path '.agents\skills\plane\SKILL.md') -and (Select-String -Path '.agents\skills\plane\SKILL.md' -Pattern '^disable-model-invocation: true' -Quiet)) { "  ok: agents skill plane present with disable-model-invocation: true" }
+  else { "  SELFTEST-FAIL: agents skill plane missing or lost the flag"; $fail = 1 }
+}
 if ((Select-String -Path '.history\_bin\windows\init.ps1' -Pattern '_sessions' -Quiet) -and (Select-String -Path '.history\_bin\windows\init.ps1' -Pattern 'declare-role.ps1' -Quiet)) { "  ok: init.ps1 creates .history/_sessions/ and requires declare-role.ps1" }
 else { "  SELFTEST-FAIL: init.ps1 missing the _sessions dir or the declare-role floor check"; $fail = 1 }
 if ((Select-String -Path (Join-Path $AgentDir 'commands\shutdown.md') -Pattern 'shutdown.sh' -Quiet)) { "  ok: shutdown command relies on the declared plane role (no env var)" }
@@ -344,5 +430,36 @@ if ((Select-String -Path 'run-server-matrix.ps1' -Pattern 'Get-PortOwnerPid' -Qu
 else { "  SELFTEST-FAIL: probe still uses the CIM port check, misses declare-role.ps1, or has no blind-mechanism skip"; $fail = 1 }
 Remove-Item -Recurse -Force $work
 Remove-Item -Recurse -Force $rg
+# v6.6 §49 - helper applies the guards at the end of adoption (static):
+# ADOPT.md §3 and the workflow-init skill must carry an explicit
+# "Apply the guards" step, positioned BEFORE the live-probe, and the
+# live-probe must say a failed probe is reported, never claimed as guarded.
+function Test-GuardOrder($file) {
+  $g = (Select-String -Path $file -Pattern 'Apply the guards' | Select-Object -First 1).LineNumber
+  $pr = (Select-String -Path $file -Pattern 'Hook live-probe' | Select-Object -First 1).LineNumber
+  return ($g -and $pr -and ($g -lt $pr))
+}
+if ((Test-GuardOrder 'ADOPT.md') -and (Select-String -Path 'ADOPT.md' -Pattern 'If the live-probe fails' -Quiet) -and (Select-String -Path 'ADOPT.md' -Pattern 'the helper reports this' -Quiet)) { "  ok: ADOPT.md carries the §49 guard step before the live-probe (failed probe is reported, trust is a human action)" }
+else { "  SELFTEST-FAIL: ADOPT.md lost the §49 guard step or its ordering (guards last, then probe)"; $fail = 1 }
+if ((Test-GuardOrder (Join-Path $AgentDir 'skills\workflow-init\SKILL.md')) -and (Select-String -Path (Join-Path $AgentDir 'skills\workflow-init\SKILL.md') -Pattern 'If the live-probe fails' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'skills\workflow-init\SKILL.md') -Pattern 'report this as a human action' -Quiet)) { "  ok: workflow-init carries the §49 guard step before the live-probe" }
+else { "  SELFTEST-FAIL: workflow-init lost the §49 guard step or its ordering"; $fail = 1 }
+# v6.6 §50 - Claude-side wake gate (static): settings.json must register
+# the UserPromptSubmit wake gate, and wake-gate.sh must exist, gate only on
+# schedule_wakeup/loop_wakeup, read only the notice file (never tick --diff),
+# and carry the stale-poll backstop.
+$wg = Join-Path $AgentDir 'hooks\wake-gate.sh'
+if ((Test-Path (Join-Path $AgentDir 'settings.json')) -and (Select-String -Path (Join-Path $AgentDir 'settings.json') -Pattern 'UserPromptSubmit' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'settings.json') -Pattern 'wake-gate.sh' -Quiet)) { "  ok: settings.json registers the UserPromptSubmit wake gate (wake-gate.sh)" }
+else { "  SELFTEST-FAIL: settings.json does not register the UserPromptSubmit wake gate"; $fail = 1 }
+if ((Test-Path $wg) -and (Select-String -Path $wg -Pattern 'schedule_wakeup' -Quiet) -and (Select-String -Path $wg -Pattern 'loop_wakeup' -Quiet) -and (Select-String -Path $wg -Pattern '_runner-notices.md' -Quiet) -and (-not (Select-String -Path $wg -Pattern 'tick --diff' -Quiet))) { "  ok: wake-gate.sh gates only scheduled wakeups and reads only the notice file (never tick --diff)" }
+else { "  SELFTEST-FAIL: wake-gate.sh missing, or it does not gate on source / read the notice file / avoids tick --diff"; $fail = 1 }
+if ((Test-Path $wg) -and (Select-String -Path $wg -Pattern 'STALE_AFTER' -Quiet) -and (Select-String -Path $wg -Pattern '_poll_state' -Quiet)) { "  ok: wake-gate.sh carries the stale-poll backstop (lets a wakeup through when the poll is stale)" }
+else { "  SELFTEST-FAIL: wake-gate.sh missing the stale-poll backstop"; $fail = 1 }
+# v6.6 §51 - ladder as backup + polling test matrix (static): tick.ps1
+# must state the ladder is a backup/failsafe, and the test-matrix doc
+# must exist and cover the three activation options.
+if ((Select-String -Path (Join-Path $bin 'tick.ps1') -Pattern 'BACKUP / failsafe, NOT the primary cost' -Quiet) -and (Select-String -Path (Join-Path $bin 'tick.ps1') -Pattern 'event-driven wake' -Quiet)) { "  ok: tick.ps1 states the ladder is a backup/failsafe, not the primary cost control (§51)" }
+else { "  SELFTEST-FAIL: tick.ps1 does not state the ladder's backup role (§51)"; $fail = 1 }
+if ((Test-Path 'docs\workflow\polling-test-matrix.md') -and (Select-String -Path 'docs\workflow\polling-test-matrix.md' -Pattern 'codex queue' -Quiet) -and (Select-String -Path 'docs\workflow\polling-test-matrix.md' -Pattern 'wake gate' -Quiet) -and (Select-String -Path 'docs\workflow\polling-test-matrix.md' -Pattern 'self-polling' -Quiet) -and (Select-String -Path 'docs\workflow\polling-test-matrix.md' -Pattern 'Failure modes' -Quiet)) { "  ok: polling test matrix exists and compares the three activation options (§51)" }
+else { "  SELFTEST-FAIL: polling test matrix missing or does not cover the three options (§51)"; $fail = 1 }
 if ($fail -eq 0) { "SELFTEST-PASS: every gate demonstrated failing and passing"; exit 0 }
 else { "SELFTEST-FAIL: one or more gates unproven"; exit 1 }

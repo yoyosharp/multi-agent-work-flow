@@ -11,8 +11,14 @@ Set-Location (Join-Path $PSScriptRoot '..\..\..')
 . (Join-Path $PSScriptRoot 'claim-rows.ps1')
 $WorkerScope = $Slugs.Count -gt 0
 $LockStale = if ($env:LOCK_STALE) { [int]$env:LOCK_STALE } else { 3600 }
-# Poll-rate ladder: adaptive cadence vs the fixed */3 (idle sessions re-read a
-# growing context every fire — measured 2026-11-03: two idle sessions burned
+# Poll-rate ladder (v6.6 §51): BACKUP / failsafe, NOT the primary cost
+# control. The primary cost control is the event-driven wake (Codex
+# `codex queue` nudge, Claude §50 wake gate) — the session only spends a
+# model turn when the notice file has something for it. The ladder governs
+# the TIME-DRIVEN fallback cadence (the agent's own wake when the
+# event-driven path fails and the system falls back to polling).
+# Adaptive cadence vs the fixed */3 (idle sessions re-read a growing
+# context every fire — measured 2026-11-03: two idle sessions burned
 # ~87M fresh tokens in one night at */3). Streak = consecutive empty diffs.
 #   streak <  BACKOFF_AFTER -> HOT rate (3 min)
 #   markers present (non-terminal claim rows / ANSWERED qa / open findings)

@@ -1,0 +1,3 @@
+# Local harness install, like .agent/ and .history/: not tracked.
+# Codex reads project hooks from .codex/hooks.json (see AGENTS.md).
+/*

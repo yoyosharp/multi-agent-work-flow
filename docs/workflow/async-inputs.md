@@ -4,20 +4,30 @@ Shared by the [worker](worker-instructions.md) and [control plane](control-plane
 The [core spec](control-plane-pm.md) defines Q&A/review gates; the
 [parallel spec](parallel-agents.md) defines claims and timing constants.
 
-## 1. Wake on change (v6.5: the periodic runner; workers poll on a ladder)
+## 1. Wake on change (v6.6: the general polling + the durable notice file; the runner is situational)
 
-**When:** The runner wakes you, or a worker's own poll fires.
-**Why:** Detect durable state changes without re-reading context on a
-timer. **How:**
+**When:** The polling fires, or a worker's own poll fires. **Why:**
+Detect durable state changes without re-reading context on a timer.
+**How:** The polling (`plane-poll`, every 30 min) is the general
+mechanism — always installed, on every platform and harness. On a
+non-empty diff it appends a notice to `.history/_runner-notices.md`
+and attempts the harness wake (`codex queue` / tmux send-keys). The
+runner (every 3 min) is situational — only where a push wake is supported.
 
 | Role | Linux/macOS | Windows |
 |---|---|---|
-| Plane | `runner.sh` via cron, every 3 min | `runner.ps1` via Task Scheduler, every 3 min |
+| Plane | `plane-poll.sh` via cron, every 30 min (+ `runner.sh` via cron, every 3 min, situational) | `plane-poll.ps1` via Task Scheduler, every 30 min (+ `runner.ps1`, situational) |
 | Worker | `.history/_bin/<platform>/tick.sh --diff <slug>` | `powershell -File .history\_bin\windows\tick.ps1 -Diff -Slugs <slug>` |
 
+**The notice file is the durable record.** On activation (boot, resume, or
+after any wake), read `.history/_runner-notices.md` first: act on pending
+notices (`- [ ]`) for your role (`role=plane` / `role=worker:<slug>`), then
+mark handled ones `- [x]` (or delete them). Each notice carries kind,
+summary, AND content (the diff) — read it, do not re-run `tick --diff`.
+Marking handled matters: the wake gate (§50) reads this file — an unmarked notice keeps waking you. A wake is only a nudge; if it cannot be sent, the notice stays in the file.
+
 Workers: no output means no change, so do not reread files or emit a summary.
-On change, read only named artifacts. A worker-wake typed into your tmux pane is only a nudge — run tick --diff and read inbox.md, never act on the wake text alone. The runner runs the diff probe once per cycle, types a wake line into the plane's tmux pane only when the diff is non-empty, refreshes `plane.lock`, runs stale/relay scans when due, and runs the overdue check (oldest WAITING first). It records scan times in `.history/._runner_state`; worker polls never refresh the lock. A `POLL-RATE x → y` line governs the worker's own wake cadence: re-register the wake at y minutes (delete + recreate, same prompt). Any changed diff snaps the rate back to `HOT_RATE` — backing off never delays noticing work you were given. See [toolkit
-notes](../../.history/_bin/README.md). On a runner wake the plane's visible reply is ONE summary line (tasks changed + gates waiting); the detail goes to the worklog and the board, never a narrated report per wake.
+On change, read only named artifacts. The poll runs the diff probe once per cycle, writes a notice on a non-empty diff, refreshes `plane.lock`, runs stale/relay scans when due, and runs the overdue check (oldest WAITING first); scan times live in `.history/._poll_state`, worker polls never refresh the lock. A `POLL-RATE x → y` line governs the worker's own wake cadence (re-register at y minutes). Any changed diff snaps the rate back to `HOT_RATE`. See [toolkit notes](../../.history/_bin/README.md). On a poll/runner wake the plane's visible reply is ONE summary line; the detail goes to the worklog and the board.
 
 ## 2. Consume inbox and human input
 

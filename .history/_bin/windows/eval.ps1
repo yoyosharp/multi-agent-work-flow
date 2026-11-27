@@ -465,8 +465,8 @@ Skip "36f hook denies a scoper write outside _pending/ (bash hook only)"
 
 # 37: helper role (v6.2) — allowlist allow/deny against the installed copy — SKIP:
 # the allowlist is enforced by the bash hook, no Windows port.
-Skip "37 helper allowlist: _bin, MEMORY.md, 0.scratch, *.local.json all allowed (bash hook only)"
-Skip "37b helper denylist: plan, TASK_LIST, api-index, _pending, shared settings.json all denied (bash hook only)"
+Skip "37 helper allowlist: _bin, MEMORY.md, 0.scratch, *.local.json, docs/workflow/, _templates/ all allowed (§48, bash hook only)"
+Skip "37b helper denylist: task plan, TASK_LIST, api-index, _pending, shared settings.json, CLAUDE.md all denied (§48, bash hook only)"
 
 # 38: session-declared roles (v6.3) — declare + registry entry
 if ((Test-Path "$BIN\declare-role.ps1") -and (Test-Path '.history\_sessions')) { Ok "38 declare-role.ps1 present and init created .history/_sessions/" } else { Bad "38 declare-role.ps1 missing or _sessions/ not created" }

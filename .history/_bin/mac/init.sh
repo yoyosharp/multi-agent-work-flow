@@ -127,12 +127,16 @@ AGENT_SRC="$ROOT/.agent"; [ -d "$AGENT_SRC" ] || AGENT_SRC="$ROOT/.claude"
 HOOK="$AGENT_SRC/hooks/domain-guard.sh"
 if [ -f "$HOOK" ] && grep -q 'PreToolUse' "$AGENT_SRC/settings.json" 2>/dev/null; then
   # functional smoke test, not just file presence (synthetic PreToolUse stdin;
-  # the hook never touches the filesystem for these paths, so no fixture dir)
+  # the hook never touches the filesystem for these paths, so no fixture dir).
+  # HOOK_AGENT_PID is a synthetic pid (no such process): it pins the hook to
+  # the registry lookup for that pid (which finds nothing, so the hook uses
+  # the WORKFLOW_ROLE/WORKFLOW_SLUG env vars below) instead of walking up
+  # from init's own parent process, which is not an agent session.
   wt="$ROOT/.worktree/__init_probe__"
   if printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/src/X.java"},"cwd":"%s"}' "$wt" "$wt" \
-      | WORKFLOW_ROOT="$ROOT" WORKFLOW_ROLE=worker WORKFLOW_SLUG=__init_probe__ bash "$HOOK" 2>/dev/null; then
+      | HOOK_AGENT_PID=4194304 WORKFLOW_ROOT="$ROOT" WORKFLOW_ROLE=worker WORKFLOW_SLUG=__init_probe__ bash "$HOOK" 2>/dev/null; then
     if printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/README.md"},"cwd":"%s"}' "$ROOT" "$ROOT" \
-        | WORKFLOW_ROOT="$ROOT" WORKFLOW_ROLE=worker WORKFLOW_SLUG=__init_probe__ bash "$HOOK" 2>/dev/null; then
+        | HOOK_AGENT_PID=4194304 WORKFLOW_ROOT="$ROOT" WORKFLOW_ROLE=worker WORKFLOW_SLUG=__init_probe__ bash "$HOOK" 2>/dev/null; then
       note_degraded "hook smoke test failed — hook allowed an out-of-domain edit; hooks inert until fixed"
     else
       echo "  ok: hook smoke test passed (allows in-domain, blocks out-of-domain)"
@@ -257,8 +261,12 @@ if [ "$MODE" = "fresh" ]; then
   note_created ".history/TASK_LIST.md (from template — fill entries at first charter)"
 else
   note_kept ".history/TASK_LIST.md (existing — never overwritten)"
-  grep -q '<' "$ROOT/.history/TASK_LIST.md" 2>/dev/null \
-    && note_flagged "TASK_LIST.md still carries <...> placeholders — finish adoption by hand"
+  # Tightened (v6.6): match only the literal `<...>` placeholder, not any
+  # bare `<`. The template's entry shape legitimately carries `<slug>`,
+  # `<STATUS>`, `<YYYY-MM-DD>` etc. (filled per-task at charter time, not
+  # at adoption) — grepping any `<` flagged every adopted install.
+  grep -q '<\.\.\.>' "$ROOT/.history/TASK_LIST.md" 2>/dev/null \
+    && note_flagged "TASK_LIST.md still carries a literal <...> placeholder — finish adoption by hand"
 fi
 
 # --- 4. spec-pointer block in the harness auto-loaded file ------------------

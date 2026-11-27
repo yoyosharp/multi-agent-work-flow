@@ -18,20 +18,20 @@ task's initial qa.md questions). Never auto-grill.
 
 ## 1. Boot and recover the plane
 
-1. Boot in ONE call: `bash .history/_bin/<platform>/boot.sh` — it declares your role (plane), clears spent shutdown markers, takes `plane.lock` (a live or unverifiable lock REFUSES: escalate to the human, never take over), registers the runner (cron / Task Scheduler, every 3 min) and your tmux pane so the runner can wake you, and prints one sweep summary. Do not run these steps by hand.
+1. Boot in ONE call: `bash .history/_bin/<platform>/boot.sh` — it declares your role (plane), clears spent shutdown markers, takes `plane.lock` (a live or unverifiable lock REFUSES: escalate to the human, never take over), registers the polling (cron / Task Scheduler, every 30 min — the general mechanism) and, only where a push wake is supported, the runner (every 3 min, situational), records your session (`.history/._plane_session`: harness + session ID, for the harness wake) and your tmux pane, and prints one sweep summary. Do not run these steps by hand. On activation, read `.history/_runner-notices.md` FIRST — act on pending notices for `role=plane`, then mark handled ones `- [x]`.
 2. If `TASK_LIST.md` is absent, initialize via the `workflow-init` skill (`.agent/skills/workflow-init/SKILL.md`): pre-install floor check first, then `init.sh` — it creates the dirs/files, gitignores, pointer
    block, TASK_LIST seed, and api-config. Never rewrite adapted rules —
    the skill flags them for human migration.
 3. Act on boot.sh's summary (its sweep is ONE `status.sh` call over the live tasks — never re-read ledgers by hand, never call `status.sh` per task): ratify/deny DECLARED claims immediately; assess active rows by artifact liveness (commits and mtimes outrank pids); surface open QA/review items. If a worker's declared method claims it will dispatch plan-review (or the §3.1 / test-result-review sub-agent) itself, correct it in the grant relay — that dispatch is plane-owned; the worker reports PLAN-COMPLETE and waits.
 4. Route declared states (`state:` lines via `status.sh`): answer every BLOCKED row within one poll cycle — to its `clearer` or cleared; carrying one
    silently is a plane failure; WAITING rows once older than `STALE_AFTER`; tally `kind:process` separately (workflow defects feed the retrospective).
-5. Confirm the runner's scheduled job is registered (CronList in Claude Code) before declaring boot complete; boot.sh already registered and verified it. The runner is the workflow clock — one cycle every 3 min: diff probe, overdue check, board regen when the diff is non-empty.
+5. Confirm the polling's scheduled job is registered (CronList in Claude Code) before declaring boot complete; boot.sh already registered and verified it. The polling is the general mechanism — one cycle every 30 min: diff probe, notice file, harness wake, overdue check, board regen when the diff is non-empty. The runner (every 3 min) is situational, only where a push wake is supported.
 6. Report active, planned, and blocked tasks.
 7. Fill `.history/_bin/api-config.env` (init copied the template; only if the project uses `api.sh`): fill every `<…>` (base URL, account, session header, envelope, auth endpoints/bodies) and smoke-test one `api.sh login`. Keep it adapted — the config changes, never `api.sh`. Also fill `MT_BOOT_CMD` + `MT_SERVER_MATCH` (`server.sh start` reads both; a missing one refuses the start).
 
 ## 2. Poll and deliver changes
 
-The runner wakes you on its 3-min cycle: diff probe, `plane.lock` refresh, overdue check, time-gated stale/relay scans, board regen when the diff is non-empty. On changed output,
+The polling wakes you on its 30-min cycle (the runner adds a 3-min cycle where a push is supported): diff probe, `plane.lock` refresh, notice file, harness wake, overdue check, time-gated stale/relay scans, board regen when the diff is non-empty. On changed output,
 inspect named files and apply [async-inputs.md](async-inputs.md). Before a conflicting grant, force a stale scan (`--stale-now` / `-StaleNow`) and verify candidates first.
 
 After CLOSE, assign the next phase in the worker inbox only if the charter authorizes it; otherwise ask the human. Manual-test (§6) is the exception: it is
