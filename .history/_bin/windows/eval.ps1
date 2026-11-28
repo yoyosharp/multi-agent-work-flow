@@ -1,4 +1,4 @@
-﻿# eval.ps1 — Windows eval suite (v6.5). Ports eval.sh's 40 scenarios to PowerShell.
+﻿# eval.ps1 — Windows eval suite (v6.6.1). Ports eval.sh's 40 scenarios to PowerShell.
 #
 # The gate that shows a v6 install behaves identically on a second project
 # or machine, instead of asserting it: it copies the package to a temp
@@ -16,7 +16,7 @@
 # plane's, not the eval's.
 #
 # Skips (counted, never failures — the machinery does not exist on Windows):
-#   - hook scenarios (15/15b phase-done, 18/18b, 27b/c/d, 35c/d, 36e/f,
+#   - hook scenarios (15/15b phase-done, 18/18b, 27b/c/d, 35c/d, 36e/f/g/h,
 #     37/37b, 38c/d/e, 39/39b/c): domain-guard.sh is bash-only, no Windows
 #     port; the hook is proven by the linux/mac eval. Scenario 28's hook
 #     half is likewise skipped — the script-refusal half still runs.
@@ -462,6 +462,10 @@ if ((Has-Str 'docs\workflow\control-plane-pm.md' '§0 pre-intake') -and (Has-Str
 # 36e/36f: hook allows a scoper write to _pending/ / denies outside it — SKIP.
 Skip "36e hook allows a scoper write to _pending/ (bash hook only)"
 Skip "36f hook denies a scoper write outside _pending/ (bash hook only)"
+# 36g/36h: scoper _shared/ + 0.scratch/ for every role — SKIP (bash hook
+# only; the static gate lives in selftest.ps1).
+Skip "36g hook allows a scoper write to _shared/ (bash hook only)"
+Skip "36h hook allows a plane/scoper write to 0.scratch/ (bash hook only)"
 
 # 37: helper role (v6.2) — allowlist allow/deny against the installed copy — SKIP:
 # the allowlist is enforced by the bash hook, no Windows port.
@@ -488,6 +492,16 @@ Remove-Item Env:\DECLARE_ROLE_PID -ErrorAction SilentlyContinue
 Remove-Item Env:\WORKFLOW_ROOT -ErrorAction SilentlyContinue
 $regFile = ".history\_sessions\$regpid"
 if ((Test-Path $regFile) -and ((Get-Content $regFile) -contains 'role=worker') -and ((Get-Content $regFile) -contains 'slug=2026-11-11-evalreg')) { Ok "38b declare-role.ps1 writes role=worker slug=2026-11-11-evalreg for the injected pid (v6.5: the resolved full slug is registered)" } else { Bad "38b declare-role.ps1 did not write the registry entry" }
+# 38f/38g: role-change block (v6.6.1 §53/5) — same role re-declared is
+# idempotent, a DIFFERENT role is refused and the entry is unchanged.
+$env:WORKFLOW_ROOT = $PROJ
+$env:DECLARE_ROLE_PID = "$regpid"
+$rf = Run-PS1 "$BIN\declare-role.ps1" @('-Role', 'worker', '-Slug', 'evalreg')
+if (($rf.Code -eq 0) -and ((Get-Content $regFile) -contains 'role=worker')) { Ok "38f declare-role.ps1 re-declaring the same role is idempotent" } else { Bad "38f declare-role.ps1 refused a same-role re-declaration" }
+$rg = Run-PS1 "$BIN\declare-role.ps1" @('-Role', 'plane')
+Remove-Item Env:\DECLARE_ROLE_PID -ErrorAction SilentlyContinue
+Remove-Item Env:\WORKFLOW_ROOT -ErrorAction SilentlyContinue
+if (($rg.Code -ne 0) -and ((Get-Content $regFile) -contains 'role=worker')) { Ok "38g declare-role.ps1 refuses a different role once one is registered (v6.6.1 §53/5)" } else { Bad "38g declare-role.ps1 allowed a role change" }
 # 38c/38d/38e: hook enforcement of the registry — SKIP (bash hook only).
 Skip "38c hook allows a registry worker's in-domain edit (bash hook only)"
 Skip "38d hook denies a registry worker's out-of-domain edit (bash hook only)"

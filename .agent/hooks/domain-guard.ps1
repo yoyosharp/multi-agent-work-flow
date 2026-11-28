@@ -28,13 +28,16 @@
 #      own stop enforces the same limits (see server.ps1 header).
 #   3  structural boundary (path writes): plane -> only under .history/;
 #      worker -> only its own worktree (.worktree/<slug>/) or its own task
-#      dir; scoper -> only .history/_pending/; helper -> the WORKFLOW
+#      dir; scoper -> only .history/_pending/ + .history/_shared/ (its
+#      queue list, v6.6.1 §53/6); helper -> the WORKFLOW
 #      INSTALL, fail-closed, domain-shaped (v6.6 §48): docs/workflow/,
 #      .history/_bin/ scripts only (*.sh/*.ps1 — api-config.env is
 #      plane-owned project config), .history/_templates/, .agent/ +
 #      .claude/ + .agents/ + .codex/ (the guard files are already denied
 #      by rule 1 for every role), 0.scratch/**, basename MEMORY.md or
-#      project_*.md, basename *.local.json. The deny on project/task files
+#      project_*.md, basename *.local.json. 0.scratch/ is writable by
+#      EVERY role for reports (v6.6.1 §53/4), on top of each role's own
+#      domain. The deny on project/task files
 #      (code, evidence, plan, the project's own config like CLAUDE.md) is
 #      absolute. The allowlist is about WRITES (§51): reads are
 #      unrestricted (except rule 1 secrets) — the helper reads plan, code,
@@ -317,10 +320,19 @@ if ($IsEdit) {
       if ($AgentPid -gt 0 -and $ap -ieq (Join-Path $sessionsDir "$AgentPid")) { continue }
       Write-Deny "registry files are per-session - you may write only your own .history/_sessions/<agent-pid> (yours: $(if ($AgentPid -gt 0) { $AgentPid } else { '<none>' })): $raw"
     }
+    # 0.scratch/ carve-out (v6.6.1 §53/4): the shared scratch dir is
+    # writable by EVERY role (plane, worker, scoper, helper) for reports
+    # — the one place outside a role's domain where an agent may leave a
+    # report. Reports only: it does not extend any role's domain for
+    # code, evidence, plan, or state. (The helper branch below still
+    # lists 0.scratch/ — it is subsumed by this carve-out.)
+    if (Test-Under $ap (Join-Path $Root '0.scratch')) { continue }
     if ($Role -eq 'plane') {
       if (-not (Test-Under $ap (Join-Path $Root '.history'))) { Write-Deny "plane may write only under .history/: $raw" }
     } elseif ($Role -eq 'scoper') {
-      if (-not (Test-Under $ap (Join-Path $Root '.history\_pending'))) { Write-Deny "scoper may write only under .history/_pending/: $raw" }
+      # Scoper queue list lives in .history/_shared/ (v6.6.1 §53/6),
+      # intake docs in .history/_pending/ — both are the scoper's domain.
+      if (-not (Test-Under $ap (Join-Path $Root '.history\_pending')) -and -not (Test-Under $ap (Join-Path $Root '.history\_shared'))) { Write-Deny "scoper may write only under .history/_pending/ or .history/_shared/: $raw" }
     } elseif ($Role -eq 'helper') {
       # Helper allowlist, fail-closed, DOMAIN-SHAPED (v6.6 §48): the helper
       # may write to any file belonging to the workflow install —

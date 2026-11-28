@@ -1,4 +1,4 @@
-# Delivery checklist (plane-side, v6.5)
+# Delivery checklist (plane-side, v6.6.1)
 
 The delivery gate's checklist (B-3 / Q-D1). `delivery.sh` is the
 mechanical half (pre-flight presence check + cherry-pick list); this file

@@ -17,10 +17,16 @@
 # CLI process pid, found by walking up the parent chain until the process
 # image name matches the agent binary. DECLARE_ROLE_PID (env var) overrides
 # the walk-up (selftest only). This script writes ONLY its own pid's file -
-# never another session's. A session that needs a different role re-runs
-# this script (the file is overwritten). Stale entries (dead pid, or a pid
-# whose process is no longer the agent CLI) are ignored by the hook, never
-# deleted by it.
+# never another session's. A session's role is declared ONCE and cannot
+# be changed (v6.6.1 §53/5): re-declaring the SAME role is idempotent
+# (harmless, the file is rewritten with the same role), re-declaring a
+# DIFFERENT role is refused — a session that needs a different role must
+# be a new session. Stale entries (dead pid, or a pid whose process is
+# no longer the agent CLI) are ignored by the hook, never deleted by it.
+# Edge: a pid reused by a new agent session could inherit a stale
+# registry file and be falsely refused — the registry is keyed by pid,
+# so a stale entry for a dead pid is a pre-existing limitation, shared
+# with the hook's registry read.
 #
 # Agent images are matched by EXACT name, never a substring: the Codex CLI
 # spawns `codex-command-runner-*.exe` between the shell and itself, and a
@@ -151,6 +157,17 @@ if ($AgentPid -le 0) {
 }
 $sessionsDir = Join-Path $Root '.history\_sessions'
 New-Item -ItemType Directory -Force -Path $sessionsDir | Out-Null
+# Role-change block (v6.6.1 §53/5): refuse re-declaring a DIFFERENT
+# role once one is registered for this pid. Same-role re-declaration
+# stays idempotent (the file is rewritten with the same role).
+$regFile = Join-Path $sessionsDir $AgentPid
+if (Test-Path $regFile) {
+  $existing = (Get-Content $regFile -ErrorAction SilentlyContinue | Where-Object { $_ -match '^role=' } | Select-Object -First 1) -replace '^role=', ''
+  if ($existing -and ($existing -ne $Role)) {
+    Write-Error "declare-role: role already declared as '$existing' for this session (agent pid $AgentPid) - roles cannot be changed; start a new session for a different role"
+    exit 1
+  }
+}
 $content = "role=$Role"
 if ($Role -eq 'worker') { $content += "`nslug=$Slug" }
 if (($Role -eq 'worker') -and ($Label -ne "")) { $content += "`nlabel=$Label" }

@@ -1,6 +1,6 @@
 # Adopting the workflow from `.workflow/` — agent guide
 
-Status: **v6.6 (2026-11-27).** Ships in the package as `ADOPT.md`.
+Status: **v6.6.1 (2026-11-28).** Ships in the package as `ADOPT.md`.
 Decisions recorded in §1; the model is the rule, not a proposal.
 
 ## 0. Read first — the model
@@ -90,6 +90,19 @@ is the general mechanism and the runner is situational (§41); init
 (copy-first; template location is a user-declared input); delivery
 (nested clone + gitignore); ADOPT.md gains harness-specific sections
 (§51).
+
+Decisions resolved for v6.6.1: Windows `boot.ps1` (one-command plane
+boot, mirroring `linux/boot.sh`); the runner/poll installers use a
+finite 3650-day repetition and run headless (`-WindowStyle Hidden`,
+§53/2-3); `0.scratch/` is writable by every role for reports (§53/4);
+declare-role blocks a role change once a role is registered (§53/5);
+the scoper's queue list lives in `.history/_shared/` (§53/6); a
+Windows manual-test driver (`api.ps1`/`evidence.ps1`) ports the
+linux/mac engine, verified statically until loopback is granted
+(§54/8-9); loopback is named as not-egress in the permissions
+manifest. Deferred: the sandbox profile promotion (bundled or split),
+Probe B gating, the loopback grant mechanism, the out-of-sandbox
+broker, server reachability, the api-config.env off-host check.
 Deferred: the init template-path variant (§7).
 
 ## 2. Prerequisites
@@ -311,7 +324,10 @@ helper file there would be indistinguishable from a template file the
 refresh is supposed to replace. The template refresh wiping scratch is
 only safe if the scratch is somewhere the refresh never touches, which
 is exactly what `0.scratch/` already is. Dropping it saves one folder
-and buys a wipe-on-refresh footgun.
+and buys a wipe-on-refresh footgun. Since v6.6.1 (§53/4) it is
+writable by EVERY role for reports — the one place outside a role's
+own domain where an agent may leave a report (reports only; a worker
+still writes code and evidence only under its task dir / worktree).
 
 ## 7. `workflow-init` — template location is a user-declared input (v6.5), copy-first stays
 
@@ -452,3 +468,15 @@ platform-specific parts, learned from running the workflow on both.
   Codex session when the user or workflow requires another poll.
   PowerShell here-strings and `param()` placement are checked by the
   Windows static check (no PowerShell host on the build machine).
+- The plane boots in ONE call: `powershell -File
+  .history\_bin\windows\boot.ps1` (v6.6.1, mirrors `linux/boot.sh`) —
+  it declares the plane role, clears spent shutdown markers, takes
+  `plane.lock`, installs the poll (always) and the runner (only when a
+  Codex CLI is present for the push wake), records the plane session,
+  reads the pending plane notices, and prints one sweep. The
+  installers register their Task Scheduler actions headless
+  (`-WindowStyle Hidden`, v6.6.1 §53/3) and use a finite 3650-day
+  repetition (`[TimeSpan]::MaxValue` is rejected by Task Scheduler,
+  §53/2). The manual-test driver is `api.ps1`/`evidence.ps1` (ports
+  of `api.sh`/`evidence.sh`); loopback is still the deferred grant,
+  so the driver is verified statically, not live, until then (§54/8).

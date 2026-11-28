@@ -1,4 +1,4 @@
-﻿# wake.ps1 — harness wake helper (v6.6, Windows). Dot-sourced by
+﻿# wake.ps1 — harness wake helper (v6.6.1, Windows). Dot-sourced by
 # plane-poll.ps1 and runner.ps1.
 #   Send-HarnessWake <role> <slug> <message> — the harness adapter
 #   (§§39–47): the poll/runner calls this so the wake goes through the
@@ -19,15 +19,29 @@ function Write-WakeLog([string]$msg) {
   elseif (Get-Command Write-PollLog -ErrorAction SilentlyContinue) { Write-PollLog $msg }
   else { $msg }
 }
-function Send-HarnessWake([string]$role, [string]$slug, [string]$message) {
-  $sfile = if ($role -eq 'plane') { Join-Path $Root '.history\_plane_session' } else { Join-Path $Root ".history\_worker_sessions\$slug" }
+function Read-SessionFile([string]$sfile) {
+  # Read-SessionFile <path> -> @{ harness = ...; session = ... }.
+  # Parses the `harness=<name>` / `session=<id>` session record
+  # (.history/._plane_session, .history/._worker_sessions/<slug>).
+  # BOM/whitespace tolerant (v6.6.1, D3): a UTF-8 BOM — written by
+  # PowerShell 5.1 Set-Content -Encoding UTF8 — sits on the first line
+  # and breaks the ^harness= anchor, so the poll logged an empty
+  # harness even though the session file existed; leading whitespace
+  # breaks it the same way. Strip both before matching.
   $harness = ''; $session = ''
   if (Test-Path $sfile) {
     foreach ($line in (Get-Content $sfile)) {
+      $line = $line.TrimStart([char[]]([char]0xFEFF, ' ', "`t"))
       if ($line -match '^harness=(.+)$') { $harness = $Matches[1].Trim() }
       if ($line -match '^session=(.+)$') { $session = $Matches[1].Trim() }
     }
   }
+  return @{ harness = $harness; session = $session }
+}
+function Send-HarnessWake([string]$role, [string]$slug, [string]$message) {
+  $sfile = if ($role -eq 'plane') { Join-Path $Root '.history\_plane_session' } else { Join-Path $Root ".history\_worker_sessions\$slug" }
+  $parsed = Read-SessionFile $sfile
+  $harness = $parsed.harness; $session = $parsed.session
   if (($harness -eq 'codex') -and $session) {
     if (Get-Command codex -ErrorAction SilentlyContinue) {
       try {

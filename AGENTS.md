@@ -23,7 +23,7 @@ adding a faster cycle and prompt delivery on top of the polling. Resume
 the Codex session when the user or workflow requires another poll. Use the
 package's exact scripts for status, task setup, server lifecycle, and gates.
 
-Codex enforcement (v6.5.1): Codex 0.172+ runs lifecycle hooks declared in
+Codex enforcement (v6.6.1): Codex 0.172+ runs lifecycle hooks declared in
 `.codex/hooks.json` (PreToolUse, PostToolUse, Stop, SessionStart, ...). This
 project wires the v6 domain guard there: `.codex/hooks.json` runs
 `.agent/hooks/domain-guard.ps1` (the PowerShell port of the bash

@@ -586,6 +586,22 @@ printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/.history/TASK_LIST.md"
   | WORKFLOW_ROLE=scoper bash .claude/hooks/domain-guard.sh >/dev/null 2>&1 \
   && bad "36f hook allowed a scoper write to TASK_LIST.md" \
   || ok "36f hook denies a scoper write outside _pending/"
+printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/.history/_shared/plan-backlog-2026-11-28.md"},"cwd":"%s"}' "$PROJ" "$PROJ" \
+  | WORKFLOW_ROLE=scoper bash .claude/hooks/domain-guard.sh >/dev/null 2>&1 \
+  && ok "36g hook allows a scoper write to _shared/ (its queue list, v6.6.1 §53/6)" \
+  || bad "36g hook blocked a scoper write to _shared/"
+# 36h: 0.scratch/ is writable by EVERY role for reports (v6.6.1 §53/4) —
+# the carve-out sits before the role branches, so a plane (which may
+# otherwise write only under .history/) and a scoper (only _pending/ +
+# _shared/) both get it.
+printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/0.scratch/plane-report.md"},"cwd":"%s"}' "$PROJ" "$PROJ" \
+  | WORKFLOW_ROLE=plane bash .claude/hooks/domain-guard.sh >/dev/null 2>&1 \
+  && ok "36h hook allows a plane write to 0.scratch/ (report, v6.6.1 §53/4)" \
+  || bad "36h hook blocked a plane write to 0.scratch/"
+printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/0.scratch/scoper-note.md"},"cwd":"%s"}' "$PROJ" "$PROJ" \
+  | WORKFLOW_ROLE=scoper bash .claude/hooks/domain-guard.sh >/dev/null 2>&1 \
+  && ok "36h hook allows a scoper write to 0.scratch/ (report, v6.6.1 §53/4)" \
+  || bad "36h hook blocked a scoper write to 0.scratch/"
 
 # 37: helper role (v6.2) — allowlist allow/deny against the installed copy
 hprobe() { # hprobe <file-path> <role> — hook exit code (0 allow, 2 deny)
@@ -634,6 +650,18 @@ WORKFLOW_ROOT="$PROJ" DECLARE_ROLE_PID="$regpid" bash "$BIN/declare-role.sh" wor
   && grep -qx 'slug=2026-11-11-evalreg' ".history/_sessions/$regpid" \
   && ok "38b declare-role.sh writes role=worker slug=2026-11-11-evalreg for the injected pid (v6.5: the resolved full slug is registered)" \
   || bad "38b declare-role.sh did not write the registry entry"
+# 38f/38g: role-change block (v6.6.1 §53/5) — same role re-declared
+# is idempotent, a DIFFERENT role is refused and the entry is unchanged.
+WORKFLOW_ROOT="$PROJ" DECLARE_ROLE_PID="$regpid" bash "$BIN/declare-role.sh" worker evalreg >/dev/null 2>&1; _rc=$?
+[ "$_rc" -eq 0 ] \
+  && grep -qx 'role=worker' ".history/_sessions/$regpid" \
+  && ok "38f declare-role.sh re-declaring the same role is idempotent" \
+  || bad "38f declare-role.sh refused a same-role re-declaration"
+WORKFLOW_ROOT="$PROJ" DECLARE_ROLE_PID="$regpid" bash "$BIN/declare-role.sh" plane >/dev/null 2>&1; _rc=$?
+[ "$_rc" -ne 0 ] \
+  && grep -qx 'role=worker' ".history/_sessions/$regpid" \
+  && ok "38g declare-role.sh refuses a different role once one is registered (v6.6.1 §53/5)" \
+  || bad "38g declare-role.sh allowed a role change"
 reghook() { # reghook <pid> <file> <cwd> — hook exit code with HOOK_AGENT_PID, no role env vars
   printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"},"cwd":"%s"}' "$2" "$3" \
     | env -u WORKFLOW_ROLE -u WORKFLOW_SLUG -u WF_ROLE -u WF_SLUG WORKFLOW_ROOT="$PROJ" HOOK_AGENT_PID="$1" bash .claude/hooks/domain-guard.sh >/dev/null 2>&1; echo $?

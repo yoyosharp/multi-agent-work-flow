@@ -286,6 +286,11 @@ Copy-Item (Join-Path $bin 'tick.ps1') "$pp\.history\_bin\windows\tick.ps1"
 Copy-Item (Join-Path $bin 'claim-rows.ps1') "$pp\.history\_bin\windows\claim-rows.ps1"
 Copy-Item (Join-Path $bin 'stale.ps1') "$pp\.history\_bin\windows\stale.ps1"
 Copy-Item (Join-Path $bin 'relays.ps1') "$pp\.history\_bin\windows\relays.ps1"
+# runner.ps1 dot-sources notices.ps1 + wake.ps1 at load (v6.6.1: the
+# v6.6 fixture omitted them, so the runner under test never loaded its
+# helpers — the no-lock baseline masked it).
+Copy-Item (Join-Path $bin 'notices.ps1') "$pp\.history\_bin\windows\notices.ps1"
+Copy-Item (Join-Path $bin 'wake.ps1') "$pp\.history\_bin\windows\wake.ps1"
 $null = & powershell -File "$pp\.history\_bin\windows\runner.ps1" 2>$null; $ppCode = $LASTEXITCODE
 if ($ppCode -ne 0) { "  ok: without the marker, runner runs tick and fails with no lock" }
 else { "  SELFTEST-FAIL: runner passed with no lock — the no-marker baseline is broken"; $fail = 1 }
@@ -296,6 +301,8 @@ Copy-Item (Join-Path $bin 'tick.ps1') "$pp2\.history\_bin\windows\tick.ps1"
 Copy-Item (Join-Path $bin 'claim-rows.ps1') "$pp2\.history\_bin\windows\claim-rows.ps1"
 Copy-Item (Join-Path $bin 'stale.ps1') "$pp2\.history\_bin\windows\stale.ps1"
 Copy-Item (Join-Path $bin 'relays.ps1') "$pp2\.history\_bin\windows\relays.ps1"
+Copy-Item (Join-Path $bin 'notices.ps1') "$pp2\.history\_bin\windows\notices.ps1"
+Copy-Item (Join-Path $bin 'wake.ps1') "$pp2\.history\_bin\windows\wake.ps1"
 New-Item -ItemType File -Path "$pp2\.history\._watcher_stop" -Force | Out-Null
 $null = & powershell -File "$pp2\.history\_bin\windows\runner.ps1" 2>$null; $ppCode = $LASTEXITCODE
 if ($ppCode -eq 0) { "  ok: runner exits 0 on the stop marker without running tick" }
@@ -317,6 +324,51 @@ if (-not (Select-String -Path "$sd\.history\2026-11-11-demo\workers.md" -Pattern
 else { "  SELFTEST-FAIL: a live claim row survived the shutdown release"; $fail = 1 }
 if ((Select-String -Path "$sd\.history\2026-11-11-demo\worklog.md" -Pattern 'session end — shutdown' -Quiet) -and (Select-String -Path "$sd\.history\2026-11-11-demo\worklog.md" -Pattern 'B3 checkpoint' -Quiet) -and (Select-String -Path "$sd\.history\2026-11-11-demo\inbox.md" -Pattern '^SHUTDOWN — ' -Quiet)) { "  ok: shutdown release leaves the B3 checkpoint + session-end log + inbox row" }
 else { "  SELFTEST-FAIL: shutdown release is missing checkpoint, session-end log, or inbox row"; $fail = 1 }
+
+"== Windows runner/poll install (v6.6.1 §53/2-3): finite duration + headless"
+# The eval skips scheduler scenarios (no Task Scheduler on the build
+# machine), so this defect passed unnoticed in v6.6: -Install used
+# [TimeSpan]::MaxValue, which serializes to P99999999DT23H59M59S and
+# Task Scheduler rejects on Windows 11 (found live in the v6.6
+# migration). Static gate: the install block must use a finite
+# New-TimeSpan -Days 3650, and the task action must run headless
+# (-WindowStyle Hidden, §53/3) so no console flashes during work.
+foreach ($f in 'runner.ps1','plane-poll.ps1') {
+  $p = Join-Path $bin $f
+  if ((Select-String -Path $p -Pattern 'New-TimeSpan -Days 3650' -Quiet) -and (-not (Select-String -Path $p -Pattern '\[TimeSpan\]::MaxValue' -Quiet))) { "  ok: $f -Install uses a finite 3650-day repetition (no TimeSpan.MaxValue)" }
+  else { "  SELFTEST-FAIL: $f -Install still uses TimeSpan.MaxValue or lost the finite duration"; $fail = 1 }
+  if (Select-String -Path $p -Pattern '-WindowStyle Hidden' -Quiet) { "  ok: $f -Install registers the task action headless (-WindowStyle Hidden)" }
+  else { "  SELFTEST-FAIL: $f -Install does not register the task action headless"; $fail = 1 }
+}
+# boot.ps1 (v6.6.1 §53/2) must exist and carry the one-call boot:
+# declare plane, clear markers, take the lock, install poll (+ runner
+# when a push wake is supported), record the session, read notices,
+# sweep once via status.ps1.
+if ((Test-Path (Join-Path $bin 'boot.ps1')) -and (Select-String -Path (Join-Path $bin 'boot.ps1') -Pattern 'declare-role.ps1' -Quiet) -and (Select-String -Path (Join-Path $bin 'boot.ps1') -Pattern 'lock.ps1' -Quiet) -and (Select-String -Path (Join-Path $bin 'boot.ps1') -Pattern 'plane-poll.ps1' -Quiet) -and (Select-String -Path (Join-Path $bin 'boot.ps1') -Pattern 'runner.ps1' -Quiet) -and (Select-String -Path (Join-Path $bin 'boot.ps1') -Pattern '_plane_session' -Quiet) -and (Select-String -Path (Join-Path $bin 'boot.ps1') -Pattern '_runner-notices.md' -Quiet) -and (Select-String -Path (Join-Path $bin 'boot.ps1') -Pattern 'status.ps1' -Quiet)) { "  ok: boot.ps1 present with the one-call boot (declare, lock, poll+runner, session, notices, sweep)" }
+else { "  SELFTEST-FAIL: boot.ps1 missing or lost a boot step (declare/lock/poll/runner/session/notices/sweep)"; $fail = 1 }
+
+"== harness/session parsing (v6.6.1 D3): Read-SessionFile is BOM/whitespace tolerant"
+# D3: the poll logged an empty harness even though ._plane_session
+# existed. The leading hypothesis is a UTF-8 BOM (PowerShell 5.1
+# Set-Content -Encoding UTF8 writes one) on the first line breaking
+# the ^harness= anchor. This test writes a BOM-prefixed session file
+# and a whitespace-prefixed one and asserts both parse. The root
+# cause is not definitively diagnosed (no PowerShell host on the
+# build machine) — the hardening covers the leading hypothesis.
+$Root = Join-Path $work 'session-parse-root'
+New-Item -ItemType Directory -Path "$Root\.history" -Force | Out-Null
+. (Join-Path $bin 'wake.ps1')
+$sf = Join-Path $Root '.history\_plane_session'
+$bom = [byte[]](0xEF, 0xBB, 0xBF)
+$body = [System.Text.Encoding]::UTF8.GetBytes("harness=codex`r`nsession=abc-123`r`n")
+[System.IO.File]::WriteAllBytes($sf, $bom + $body)
+$parsed = Read-SessionFile $sf
+if (($parsed.harness -eq 'codex') -and ($parsed.session -eq 'abc-123')) { "  ok: Read-SessionFile reads a BOM-prefixed ._plane_session (D3)" }
+else { "  SELFTEST-FAIL: Read-SessionFile misread a BOM-prefixed session file (harness='$($parsed.harness)' session='$($parsed.session)')"; $fail = 1 }
+Set-Content -Path $sf -Value "  harness=codex`n  session=def-456" -Encoding Ascii -NoNewline
+$parsed = Read-SessionFile $sf
+if (($parsed.harness -eq 'codex') -and ($parsed.session -eq 'def-456')) { "  ok: Read-SessionFile reads a whitespace-prefixed session file" }
+else { "  SELFTEST-FAIL: Read-SessionFile misread a whitespace-prefixed session file"; $fail = 1 }
 "== scoper + helper (v6.2): skill, commands, template, §0 pointers (static only)"
 # Static assertions only — the guard behavior is proven by the
 # linux/mac selftest (bash hook) and the Codex guard (domain-guard.ps1).
@@ -342,6 +394,25 @@ if (-not (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern 
 else { "  SELFTEST-FAIL: declare-role.ps1 still depends on WMI/CIM - unusable under the Codex sandbox"; $fail = 1 }
 if (Select-String -Path '.history\_bin\windows\declare-role.ps1' -Pattern '\^\(claude\|codex\)' -Quiet) { "  ok: declare-role.ps1 matches claude|codex by exact image name, not a substring" }
 else { "  SELFTEST-FAIL: declare-role.ps1 does not match the agent image by exact name (wrapper processes would be registered)"; $fail = 1 }
+# v6.6.1 §53/5 (behavioral): same role re-declared is idempotent, a
+# DIFFERENT role is refused and the entry is left unchanged. The
+# fixture root + injected pid avoid the parent-chain walk-up.
+$drRoot = Join-Path $work 'declare-role-root'
+New-Item -ItemType Directory -Path "$drRoot\.history" -Force | Out-Null
+$env:WORKFLOW_ROOT = $drRoot
+$env:DECLARE_ROLE_PID = '424242'
+$null = & powershell -File (Join-Path $bin 'declare-role.ps1') -Role plane 2>$null; $rc1 = $LASTEXITCODE
+$regFile = Join-Path $drRoot '.history\_sessions\424242'
+$sameOk = ($rc1 -eq 0) -and (Test-Path $regFile) -and ((Get-Content $regFile) -contains 'role=plane')
+$null = & powershell -File (Join-Path $bin 'declare-role.ps1') -Role plane 2>$null; $rc2 = $LASTEXITCODE
+$sameOk = $sameOk -and ($rc2 -eq 0) -and ((Get-Content $regFile) -contains 'role=plane')
+if ($sameOk) { "  ok: declare-role.ps1 re-declaring the same role is idempotent" }
+else { "  SELFTEST-FAIL: declare-role.ps1 refused a same-role re-declaration"; $fail = 1 }
+$null = & powershell -File (Join-Path $bin 'declare-role.ps1') -Role helper 2>$null; $rc3 = $LASTEXITCODE
+if (($rc3 -ne 0) -and ((Get-Content $regFile) -contains 'role=plane')) { "  ok: declare-role.ps1 refuses a different role once one is registered (v6.6.1 §53/5)" }
+else { "  SELFTEST-FAIL: declare-role.ps1 allowed a role change — the role-change block is unproven"; $fail = 1 }
+Remove-Item Env:WORKFLOW_ROOT -ErrorAction SilentlyContinue
+Remove-Item Env:DECLARE_ROLE_PID -ErrorAction SilentlyContinue
 if ((Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern '_sessions' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern 'HOOK_AGENT_PID' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern 'find_agent_pid' -Quiet) -and (Select-String -Path (Join-Path $AgentDir 'hooks\domain-guard.sh') -Pattern 'registry files are per-session' -Quiet)) { "  ok: hook reads the registry first (HOOK_AGENT_PID override, per-session carve-out)" }
 else { "  SELFTEST-FAIL: hook missing the registry read / override / carve-out"; $fail = 1 }
 # v6.6 - Codex harness: the PreToolUse guard is ported to PowerShell and
@@ -381,6 +452,17 @@ if ($AgentDir -eq '.agent') {
   }
   if ($domainOk) { "  ok: helper prose allowlist agrees with both hook rules (same domain, §48)" }
   else { "  SELFTEST-FAIL: helper prose and hook rules disagree on the write domain (L-C2/L-C3)"; $fail = 1 }
+  # v6.6.1 §53/4 + §53/6 (static): 0.scratch/ is a role-independent
+  # carve-out in both guards (before the role branches), and the
+  # scoper's domain covers .history/_shared/ for its queue list. The
+  # behavior itself is proven by the linux/mac selftest (bash hook).
+  $scratchOk = $true
+  foreach ($gf in (Join-Path $AgentDir 'hooks\domain-guard.sh'), $hps) {
+    if (-not (Select-String -Path $gf -Pattern '0\.scratch/ carve-out \(v6\.6\.1' -Quiet)) { $scratchOk = $false; "  (missing 0.scratch carve-out: $gf)" }
+    if (-not (Select-String -Path $gf -Pattern '_shared' -Quiet)) { $scratchOk = $false; "  (missing scoper _shared: $gf)" }
+  }
+  if ($scratchOk) { "  ok: both guards carry the role-independent 0.scratch/ carve-out + scoper _shared/ (§53/4, §53/6)" }
+  else { "  SELFTEST-FAIL: a guard lost the 0.scratch/ carve-out or the scoper _shared/ domain"; $fail = 1 }
 }
 # v6.6 - Codex .agents/ drift gate (selftest.ps1 mirror of the selftest.sh gate):
 # .agents/ matches the generation from .agent/ (ADOPT.md §3 step 6).
@@ -436,7 +518,12 @@ Remove-Item -Recurse -Force $rg
 # live-probe must say a failed probe is reported, never claimed as guarded.
 function Test-GuardOrder($file) {
   $g = (Select-String -Path $file -Pattern 'Apply the guards' | Select-Object -First 1).LineNumber
-  $pr = (Select-String -Path $file -Pattern 'Hook live-probe' | Select-Object -First 1).LineNumber
+  # Match the NUMBERED step only (e.g. "11. **Hook live-probe**"): the
+  # prose mention "The hook live-probe (§3 step 11)" earlier in ADOPT.md
+  # is not the step, and matching it first false-failed this gate
+  # (v6.6 migration defect 1 — Select-String is case-insensitive, so
+  # the lowercase prose "hook live-probe" matched).
+  $pr = (Select-String -Path $file -Pattern '^\d+\. \*\*Hook live-probe\*\*' | Select-Object -First 1).LineNumber
   return ($g -and $pr -and ($g -lt $pr))
 }
 if ((Test-GuardOrder 'ADOPT.md') -and (Select-String -Path 'ADOPT.md' -Pattern 'If the live-probe fails' -Quiet) -and (Select-String -Path 'ADOPT.md' -Pattern 'the helper reports this' -Quiet)) { "  ok: ADOPT.md carries the §49 guard step before the live-probe (failed probe is reported, trust is a human action)" }

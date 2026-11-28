@@ -21,9 +21,16 @@
 # `claude` — never a plain substring match).
 # DECLARE_ROLE_PID=<pid> overrides the walk-up (selftest only).
 # This script writes ONLY its own pid's file — never another session's.
-# A session that needs a different role re-runs this script (the file is
-# overwritten). Stale entries (dead pid, or a pid that is no longer the
-# agent CLI) are ignored by the hook, never deleted by it.
+# A session's role is declared ONCE and cannot be changed (v6.6.1
+# §53/5): re-declaring the SAME role is idempotent (harmless, the file
+# is rewritten with the same role), re-declaring a DIFFERENT role is
+# refused — a session that needs a different role must be a new
+# session. Stale entries (dead pid, or a pid that is no longer the
+# agent CLI) are ignored by the hook, never deleted by it. Edge: a pid
+# reused by a new agent session could inherit a stale registry file
+# and be falsely refused — the registry is keyed by pid, so a stale
+# entry for a dead pid is a pre-existing limitation, shared with the
+# hook's registry read.
 #
 # Known limit: shell-redirection writes are not intercepted by the hook —
 # a session that deliberately writes a registry file by hand could forge
@@ -104,6 +111,13 @@ AGENT_PID="$(find_agent_pid)"
 [ -n "$AGENT_PID" ] \
   || { echo "declare-role: no agent CLI process found (no ancestor process is the agent CLI) — are you running inside an agent session?" >&2; exit 1; }
 mkdir -p "$ROOT/.history/_sessions"
+# Role-change block (v6.6.1 §53/5): refuse re-declaring a DIFFERENT
+# role once one is registered for this pid. Same-role re-declaration
+# stays idempotent (the file is rewritten with the same role).
+_existing="$(grep '^role=' "$ROOT/.history/_sessions/$AGENT_PID" 2>/dev/null | head -1 | cut -d= -f2)"
+if [ -n "$_existing" ] && [ "$_existing" != "$ROLE" ]; then
+  echo "declare-role: role already declared as '$_existing' for this session (agent pid $AGENT_PID) — roles cannot be changed; start a new session for a different role" >&2; exit 1
+fi
 tmp="$ROOT/.history/_sessions/.tmp.$$"
 {
   printf 'role=%s\n' "$ROLE"

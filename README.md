@@ -1,4 +1,4 @@
-# Set-up v6.6 — anchors-based control-plane / parallel-agents workflow
+# Set-up v6.6.1 — anchors-based control-plane / parallel-agents workflow
 
 **Self-contained**: everything needed ships inside this folder, whatever it
 is named. Get the template from where the user says (a URL → clone; a
@@ -15,6 +15,7 @@ git clone <WORKFLOW_REPO_URL> .workflow   # URL → nested clone (ignored via /.
 # or: cp -r <local-template>/. <target-project>/   # local path → copy
 ```
 
+**What makes this v6.6.1**: a Windows `boot.ps1` (one-command plane boot, mirroring `linux/boot.sh`); the runner/poll installers use a finite 3650-day repetition and run headless (no console flash); `0.scratch/` is writable by every role for reports; `declare-role` blocks a role change once a role is registered; the scoper's queue list lives in `.history/_shared/`; and a Windows manual-test driver (`api.ps1`/`evidence.ps1`) ports the linux/mac engine (loopback is still the deferred grant — the driver is verified statically, not live, until then).
 **What makes this v6.6**: polling is the general mechanism and the runner is a situational protocol (the v6.5 runner-centric framing is superseded). The general polling (`plane-poll`, every 30 min) detects changes with `tick --diff` and records every wake notice in the durable notice file (`.history/_runner-notices.md`), which the agent reads on activation; the push wake is `codex queue` on Codex and tmux send-keys on Claude, and a `UserPromptSubmit` hook gates the Claude scheduled wake so a noop tick costs 0 tokens. The helper's allowlist is domain-shaped (it can write any file belonging to the workflow install, never project/task files), and the helper applies the guards at the end of adoption. ADOPT.md gains harness-specific sections (Codex / Claude Code; Linux / Windows). The poll-rate ladder stays as a backup/failsafe, not the primary cost control.
 **What makes this v6.5**: the plan gate (a fourth gate file, `plan.md`, with mutual agreement between plane and worker — plane CLEAN for a rev plus the worker's rev-cited acceptance), the periodic runner (one 3-min cycle replacing the watcher + poll backstop), and the audit consolidation (a 45-item core spec, one shared claim-row parser, buried rules promoted into the checklists that execute them).
 **What makes this v6**: binding lives in behavioral anchors with mechanical

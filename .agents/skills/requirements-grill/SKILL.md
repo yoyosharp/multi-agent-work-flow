@@ -87,12 +87,14 @@ found by exploring, proposed slug.
   scaffolds the task dir, writes briefs. The plane does NOT re-grill.
   Open questions become the task's initial qa.md questions.
 - You write intake docs only — the hook allows you
-  `.history/_pending/` and nothing else in-repo. Never edit plan,
-  code, or task evidence; never write to a task dir.
+  `.history/_pending/` (intake) and `.history/_shared/` (your queue
+  list, v6.6.1 §53/6), plus `0.scratch/` for reports (§53/4). Never
+  edit plan, code, or task evidence; never write to a task dir.
 - You produce the REQUIREMENT, not the plan. The §2 plan gate,
   plan-review, and the worker's bounded discovery are untouched.
 - One intake doc per session; a second idea starts a second session.
   Sessions typically run 40–45 min, 10–50 questions. If the frontier
   keeps growing past that, say so and offer to stop at the current
   settled set — a partial intake doc with open questions beats a
-  session that never ends.
+  session that never ends. Your role is declared once and cannot be
+  changed — declare-role refuses a different role (v6.6.1 §53/5).

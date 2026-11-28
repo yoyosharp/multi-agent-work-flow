@@ -1,4 +1,4 @@
-﻿# plane-poll.ps1 — the GENERAL polling (v6.6, §§39–42, Windows). One cycle,
+﻿# plane-poll.ps1 — the GENERAL polling (v6.6.1, §§39–42, Windows). One cycle,
 # then exit; the scheduler (Task Scheduler, every 30 min) is the loop.
 # Polling is the general mechanism — always installed, on every platform
 # and harness. The runner is a situational protocol (a faster 3-min cycle
@@ -67,9 +67,16 @@ if ($Install) {
     $name = Get-TaskName
     $existing = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
     if ($existing) { "plane-poll: already scheduled ($name)"; exit 0 }
-    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$Root\.history\_bin\windows\plane-poll.ps1`"" -WorkingDirectory $Root
-    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 30) -RepetitionDuration ([TimeSpan]::MaxValue)
-    Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Description "Multi-agent workflow poll (v6.6) for $Root — one cycle every 30 min" | Out-Null
+    # Headless (v6.6.1 §53/3): -WindowStyle Hidden so no console window
+    # pops up and disappears during the user's work.
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Root\.history\_bin\windows\plane-poll.ps1`"" -WorkingDirectory $Root
+    # Finite repetition: [TimeSpan]::MaxValue serializes to
+    # P99999999DT23H59M59S, which Task Scheduler rejects on Windows 11
+    # (the v6.6 migration found it live on plane-poll.ps1 — the local
+    # fix used 3650 days). 3650 days (~10 years) is effectively
+    # "forever" for a scheduled task and is accepted. Same in runner.ps1.
+    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 30) -RepetitionDuration (New-TimeSpan -Days 3650)
+    Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Description "Multi-agent workflow poll (v6.6.1) for $Root — one cycle every 30 min" | Out-Null
     "plane-poll: scheduled every 30 min (Task Scheduler, $name)"
     exit 0
   } catch {

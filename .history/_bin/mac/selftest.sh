@@ -176,6 +176,9 @@ wt="$hr/.worktree/demo"
 [ "$(hook scoper "" "$(j_edit "$hr/.history/_pending/2026-11-16-x-intake.md" "$hr")")" = 0 ] \
   && ok "hook allows a scoper write to .history/_pending/" \
   || bad "hook blocked a scoper write to _pending/ — scoper role unproven"
+[ "$(hook scoper "" "$(j_edit "$hr/.history/_shared/plan-backlog-2026-11-28.md" "$hr")")" = 0 ] \
+  && ok "hook allows a scoper write to .history/_shared/ (its queue list, v6.6.1 §53/6)" \
+  || bad "hook blocked a scoper write to _shared/ — scoper queue list unproven"
 [ "$(hook scoper "" "$(j_edit "$hr/.history/TASK_LIST.md" "$hr")")" = 2 ] \
   && ok "hook denies a scoper write to TASK_LIST.md" \
   || bad "hook allowed a scoper write outside _pending/"
@@ -197,6 +200,18 @@ wt="$hr/.worktree/demo"
 [ "$(hook helper "" "$(j_edit "$hr/0.scratch/debug.py" "$hr")")" = 0 ] \
   && ok "hook allows a helper write to 0.scratch/ (debugging)" \
   || bad "hook blocked a helper write to 0.scratch/"
+# 0.scratch/ is writable by EVERY role for reports (v6.6.1 §53/4) — the
+# carve-out sits before the role branches, so plane/worker/scoper get
+# it too, on top of their own domains (reports only).
+[ "$(hook plane "" "$(j_edit "$hr/0.scratch/plane-report.md" "$hr")")" = 0 ] \
+  && ok "hook allows a plane write to 0.scratch/ (report, v6.6.1 §53/4)" \
+  || bad "hook blocked a plane write to 0.scratch/"
+[ "$(hook worker demo "$(j_edit "$hr/0.scratch/worker-note.md" "$hr")")" = 0 ] \
+  && ok "hook allows a worker write to 0.scratch/ (report, v6.6.1 §53/4)" \
+  || bad "hook blocked a worker write to 0.scratch/"
+[ "$(hook scoper "" "$(j_edit "$hr/0.scratch/scoper-note.md" "$hr")")" = 0 ] \
+  && ok "hook allows a scoper write to 0.scratch/ (report, v6.6.1 §53/4)" \
+  || bad "hook blocked a scoper write to 0.scratch/"
 [ "$(hook helper "" "$(j_edit "$hr/.claude/settings.local.json" "$hr")")" = 0 ] \
   && ok "hook allows a helper write to settings.local.json (local override)" \
   || bad "hook blocked a helper write to *.local.json"
@@ -297,6 +312,19 @@ WORKFLOW_ROOT="$hr" DECLARE_ROLE_PID="$fakepid" bash "$bin/declare-role.sh" work
   && grep -qx 'slug=2026-11-10-demo' "$hr/.history/_sessions/$fakepid" \
   && ok "declare-role.sh writes role=worker slug=2026-11-10-demo for the injected pid (short slug resolved)" \
   || bad "declare-role.sh did not write the registry entry (role/slug)"
+# (a2) role-change block (v6.6.1 §53/5): re-declaring the SAME role is
+# idempotent, re-declaring a DIFFERENT role is refused and the entry
+# is left unchanged.
+WORKFLOW_ROOT="$hr" DECLARE_ROLE_PID="$fakepid" bash "$bin/declare-role.sh" worker demo >/dev/null 2>&1; _rc=$?
+[ "$_rc" -eq 0 ] \
+  && grep -qx 'role=worker' "$hr/.history/_sessions/$fakepid" \
+  && ok "declare-role.sh re-declaring the same role is idempotent" \
+  || bad "declare-role.sh refused a same-role re-declaration"
+WORKFLOW_ROOT="$hr" DECLARE_ROLE_PID="$fakepid" bash "$bin/declare-role.sh" plane >/dev/null 2>&1; _rc=$?
+[ "$_rc" -ne 0 ] \
+  && grep -qx 'role=worker' "$hr/.history/_sessions/$fakepid" \
+  && ok "declare-role.sh refuses a different role once one is registered (v6.6.1 §53/5)" \
+  || bad "declare-role.sh allowed a role change — the role-change block is unproven"
 hook_reg() { # hook_reg <pid> <json> — hook with HOOK_AGENT_PID, no role env vars (env -u clears any ambient WORKFLOW_*/WF_* so the registry is the only source)
   env -u WORKFLOW_ROLE -u WORKFLOW_SLUG -u WF_ROLE -u WF_SLUG WORKFLOW_ROOT="$hr" HOOK_AGENT_PID="$1" bash "$AGENT_DIR/hooks/domain-guard.sh" <<< "$2" 2>/dev/null; echo $?
 }

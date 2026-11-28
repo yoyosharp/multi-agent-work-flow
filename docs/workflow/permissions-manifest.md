@@ -68,6 +68,15 @@ through `evidence.sh` with the raw response on stdin, keeping the same
 evidence format without composed shell appends. Do not pre-grant arbitrary
 `curl` or unrestricted egress.
 
+**Loopback is not egress (v6.6.1 §54/9)**: the manual-test driver
+talks to a LOCAL server (localhost-only bases, guarded in-script) —
+loopback, not internet egress; the "no unrestricted egress" invariant still holds. The loopback grant is separate and minimal: allow the
+driver (`api.sh` / `api.ps1`) to reach `http://localhost:<task-port>`
+/ `http://127.0.0.1:<task-port>` only — never by widening the network
+rule. Loopback is currently BLOCKED under the Codex sandbox (even
+127.0.0.1 is denied, observed 2026-11-28), so the Windows driver is
+verified statically, not live, until the grant lands (next version).
+
 Inspecting a response already saved under the repo/task evidence directory is
 local read-only work (C1); `jq` and `python -m json.tool` are useful parsers.
 Prefer inspecting the captured response file over repeating a live request.

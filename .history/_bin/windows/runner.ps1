@@ -1,4 +1,4 @@
-﻿# runner.ps1 — the SITUATIONAL fast cycle (v6.6, Windows). One cycle, then exit;
+﻿# runner.ps1 — the SITUATIONAL fast cycle (v6.6.1, Windows). One cycle, then exit;
 # the scheduler (Task Scheduler, every 3 min) is the loop.
 # The runner is a situational protocol, NOT the default: install it only
 # when the situation supports a push wake (a working harness CLI resume —
@@ -57,9 +57,16 @@ if ($Install) {
     $name = Get-TaskName
     $existing = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
     if ($existing) { "runner: already scheduled ($name)"; exit 0 }
-    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$Root\.history\_bin\windows\runner.ps1`"" -WorkingDirectory $Root
-    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 3) -RepetitionDuration ([TimeSpan]::MaxValue)
-    Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Description "Multi-agent workflow runner (v6.5) for $Root — one cycle every 3 min" | Out-Null
+    # Headless (v6.6.1 §53/3): -WindowStyle Hidden so no console window
+    # pops up and disappears during the user's work.
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Root\.history\_bin\windows\runner.ps1`"" -WorkingDirectory $Root
+    # Finite repetition: [TimeSpan]::MaxValue serializes to
+    # P99999999DT23H59M59S, which Task Scheduler rejects on Windows 11
+    # (the v6.6 migration found it live — hand-registered with 3650
+    # days). 3650 days (~10 years) is effectively "forever" for a
+    # scheduled task and is accepted. Same in plane-poll.ps1.
+    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 3) -RepetitionDuration (New-TimeSpan -Days 3650)
+    Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Description "Multi-agent workflow runner (v6.6.1) for $Root — one cycle every 3 min" | Out-Null
     "runner: scheduled every 3 min (Task Scheduler, $name)"
     exit 0
   } catch {

@@ -27,13 +27,18 @@
 #      plane. server.sh start/status need no gate (no kill involved).
 #   3. Structural boundary (Edit/Write only; reads are not structurally
 #      blocked except rule 1):
+#      0.scratch/ — writable by EVERY role for reports (v6.6.1 §53/4),
+#      on top of each role's own domain (reports only — a worker still
+#      writes code/evidence only under its task dir/worktree, the plane
+#      still writes its state only under .history/).
 #      plane  — only under .history/ (TASK_LIST, status-table mirrors,
 #               worklog closing entries, plane.lock) — never under
 #               .worktree/ or repo code.
 #      worker — only under its own worktree (.worktree/<slug>/) and its
 #               own task dir (.history/<date>-<slug>/).
-#      scoper — only under .history/_pending/ (intake docs); nothing else
-#               in-repo. A scoper in the project root would otherwise
+#      scoper — only under .history/_pending/ (intake docs) and
+#               .history/_shared/ (its queue list, v6.6.1 §53/6); nothing
+#               else in-repo. A scoper in the project root would otherwise
 #               derive as plane and could write anywhere under .history/.
 #      helper — the WORKFLOW INSTALL, fail-closed, domain-shaped
 #               (v6.6 §48): docs/workflow/, .history/_bin/ scripts only
@@ -505,10 +510,25 @@ if [ "$TOOL" = "Edit" ] || [ "$TOOL" = "Write" ]; then
     fi
     deny "registry files are per-session — you may write only your own .history/_sessions/<agent-pid> (yours: ${AGENT_PID:-<none>}): $FPATH"
   fi
+  # 0.scratch/ carve-out (v6.6.1 §53/4): the shared scratch dir is
+  # writable by EVERY role (plane, worker, scoper, helper) for reports
+  # — the one place outside a role's domain where an agent may leave a
+  # report. Reports only: it does not extend any role's domain for
+  # code, evidence, plan, or state. (The helper branch below still
+  # lists 0.scratch/ — it is subsumed by this carve-out.)
+  if under "$APATH" "$ROOT/0.scratch"; then
+    exit 0
+  fi
   if [ "$ROLE" = "plane" ]; then
     under "$APATH" "$ROOT/.history" || deny "plane may write only under .history/: $FPATH"
   elif [ "$ROLE" = "scoper" ]; then
-    under "$APATH" "$ROOT/.history/_pending" || deny "scoper may write only under .history/_pending/: $FPATH"
+    # Scoper queue list lives in .history/_shared/ (v6.6.1 §53/6),
+    # intake docs in .history/_pending/ — both are the scoper's domain.
+    if under "$APATH" "$ROOT/.history/_pending" || under "$APATH" "$ROOT/.history/_shared"; then
+      : # allowed — intake docs or the queue list
+    else
+      deny "scoper may write only under .history/_pending/ or .history/_shared/: $FPATH"
+    fi
   elif [ "$ROLE" = "helper" ]; then
     # Helper allowlist, fail-closed, DOMAIN-SHAPED (v6.6 §48): the helper
     # may write to any file belonging to the workflow install —

@@ -16,7 +16,9 @@ Windows, `powershell -File .history\_bin\windows\declare-role.ps1 scoper`.
 The hook reads the registry from it — no env var, no relaunch; run
 this command from anywhere. Without the declaration the hook derives
 you as plane (project-root cwd) and you could write anywhere under
-`.history/`; never proceed as a scoper on a plane-derived role.
+`.history/`; never proceed as a scoper on a plane-derived role. Your
+role is declared once and cannot be changed — declare-role refuses a
+different role (v6.6.1 §53/5); a different role needs a new session.
 
 ## 1. Grill
 

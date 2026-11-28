@@ -21,8 +21,8 @@ conflicting writers. **How:**
 
 - No slug: read `.history/TASK_LIST.md`; list PLANNED/IN_PROGRESS tasks with no non-terminal
   claim (DECLARED, GRANTED, EXECUTING, STALE, CHALLENGED); ask the human to choose, then stop.
-- With slug: declare your role first — `bash .history/_bin/<platform>/declare-role.sh worker <slug> [label]` (on Windows, `powershell -File .history\_bin\windows\declare-role.ps1 worker <slug> [label]`) (label defaults to the task short — the slug minus its `YYYY-MM-DD-` prefix; the plane names you by label) — then `cd` to the worktree `.worktree/<slug>/` (edits/builds/tests target the task branch). Require `.history/<slug>/brief*.md`, else report valid slugs and
-  stop. Seed the task dir with `scaffold.sh <slug>` (copies workers.md/qa.md/worklog.md/inbox.md/plan.md from `.history/_templates/`).
+- With slug: declare your role first — `bash .history/_bin/<platform>/declare-role.sh worker <slug> [label]` (on Windows, `powershell -File .history\_bin\windows\declare-role.ps1 worker <slug> [label]`) (label defaults to the task short — the slug minus its `YYYY-MM-DD-` prefix; the plane names you by label) — once, and it cannot be changed (declare-role refuses a different role, v6.6.1 §53/5) — then `cd` to the worktree `.worktree/<slug>/` (edits/builds/tests target the task branch). Require `.history/<slug>/brief*.md`, else report valid slugs and
+  stop. Seed the task dir with `scaffold.sh <slug>` (copies workers.md/qa.md/worklog.md/inbox.md/plan.md from `.history/_templates/`). Reports may go in `0.scratch/` (writable by every role, v6.6.1 §53/4); code and evidence stay under your task dir / worktree.
 - Append your DECLARED row: identity, phase, method, commitment, write domain, resource
   tokens, time, notes (`host:pid` best effort, informational). Method = your harness's
   systematic protocol (free text); commitment = which steps you will run this phase. First worklog entry repeats `Method:` + `Commitment:`; while DECLARED, read-only preparation only.
